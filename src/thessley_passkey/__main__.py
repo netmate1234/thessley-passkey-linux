@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import __version__, link, protectors, protocol
+from . import __version__, link, protectors, protocol, vault
 from .core import Service, UnknownSite, WrongSecret, default_label
 from .interaction import CliInteraction
 from .protocol import NetworkError, ServerError
@@ -41,7 +41,7 @@ def cli(argv: list[str]) -> int:
     ui = CliInteraction()
     try:
         if a.cmd == "list":
-            for d in svc.vault.all():
+            for d in vault.sort_devices(svc.vault.all()):
                 print(f"{d.id}  {d.origin}  {d.username or '-'}  {d.label}  [{d.protection}]")
         elif a.cmd == "remove":
             svc.vault.remove(a.device_id)

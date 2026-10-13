@@ -113,7 +113,7 @@ class Window(Adw.ApplicationWindow):
         self.request = request
         self.launched_with_link = launched_with_link
         self.set_title("Thessley Passkey")
-        self.set_default_size(460, 560)
+        self.set_default_size(680, 820)
         self.busy = False
 
         self.stack = Gtk.Stack()
@@ -143,7 +143,7 @@ class Window(Adw.ApplicationWindow):
         old = self.stack.get_child_by_name(name)
         if old is not None:
             self.stack.remove(old)
-        clamp = Adw.Clamp(maximum_size=480, margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
+        clamp = Adw.Clamp(maximum_size=600, margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
         clamp.set_child(widget)
         scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
         scroll.set_child(clamp)
@@ -214,7 +214,7 @@ class Window(Adw.ApplicationWindow):
         col.append(_label("Thessley Passkey", ["title-1"]))
         col.append(_label("Approve logins to your Thessley-protected sites from this computer. "
                           "Open a site's “Open on this device” link to enrol or approve.", ["dim-label"]))
-        devices = self.service.vault.all()
+        devices = vault.sort_devices(self.service.vault.all())
         group = Adw.PreferencesGroup(title="Enrolled sites")
         if not devices:
             group.add(_plain_row("Nothing enrolled yet", "On a site's profile page choose Add a device, then press “Open on this device”."))

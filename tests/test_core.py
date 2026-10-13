@@ -260,6 +260,14 @@ class VaultTests(unittest.TestCase):
             self.assertEqual(oct(v.path.parent.stat().st_mode & 0o777), "0o700")
 
 
+class SortTests(unittest.TestCase):
+    def test_sites_are_listed_alphabetically_ignoring_case(self):
+        def dev(i, origin, user="u", label="l"):
+            return vault.Device(id=i, origin=origin, credential_id=i, username=user, label=label, enrolled_at=1, public_key="p", protection="pin", wrapped={})
+        shuffled = [dev("1", "https://zeta.example"), dev("2", "https://Alpha.example", "bob"), dev("3", "https://alpha.example", "Alice"), dev("4", "https://mid.example")]
+        self.assertEqual([d.id for d in vault.sort_devices(shuffled)], ["3", "2", "4", "1"])
+
+
 class ServiceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

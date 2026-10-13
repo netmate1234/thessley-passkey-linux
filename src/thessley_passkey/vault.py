@@ -178,5 +178,10 @@ class Vault:
         return max(0, current.locked_until - now)
 
 
+def sort_devices(devices: list[Device]) -> list[Device]:
+    """Alphabetical by site, then account, then name (case-insensitive)."""
+    return sorted(devices, key=lambda d: (d.origin.casefold(), d.username.casefold(), d.label.casefold()))
+
+
 def new_device_id() -> str:
     return uuid.uuid4().hex

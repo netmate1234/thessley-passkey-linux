@@ -1,0 +1,5 @@
+cryptography>=42
+requests>=2.31
+fido2>=2.0
+asn1crypto>=1.5
+PySide6-Essentials>=6.6

@@ -1,6 +1,6 @@
-# Thessley Passkey for Linux
+# Thessley Passkey for Linux (and Windows 11)
 
-Approve **Thessley Passkey** logins from an Ubuntu (or other GTK) desktop, the same
+Approve **Thessley Passkey** logins from an Ubuntu (or other GTK) desktop, or from **Windows 11** (see [WINDOWS.md](WINDOWS.md)), the same
 protocol the Android app speaks. It works with any site running the Thessley Passkey
 module (WordPress plugin or the Drupal module), unchanged.
 
@@ -12,7 +12,7 @@ choose **Approve** or **Deny**, then unlock with your **PIN** and/or **FIDO2 sec
 
 ```
 sudo apt install python3-gi gir1.2-adw-1 python3-cryptography python3-requests python3-fido2 \
-                 python3-tpm2-pytss python3-asn1crypto     # the last two only for the TPM option
+                 python3-asn1crypto                          # the last one only for the TPM option
 ./install.sh          # installs for your user and registers the link handler
 ./uninstall.sh        # removes it (add --purge to also delete enrolled keys)
 ```

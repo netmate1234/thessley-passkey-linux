@@ -15,14 +15,33 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
-from . import __version__, link, protectors, protocol, vault  # noqa: E402
+from . import __version__, link, protectors, protocol, tpm, vault  # noqa: E402
 from .core import Service, UnknownSite, WrongSecret, default_label  # noqa: E402
 from .interaction import Cancelled, Interaction  # noqa: E402
 from .protocol import NetworkError, ServerError  # noqa: E402
 from .vault import Device, Locked  # noqa: E402
 
 APP_ID = "se.thessley.Passkey"
-PROTECTION_LABELS = {"pin": "PIN", "fido2": "Security key", "pin+fido2": "PIN and security key"}
+PROTECTION_LABELS = {
+    "pin": "PIN",
+    "fido2": "Security key",
+    "pin+fido2": "PIN and security key",
+    "tpm+pin": "TPM chip + PIN",
+    "tpm+pin+fido2": "TPM chip + PIN + security key",
+}
+SOFTWARE_NOTE = {
+    "pin": "software key", "fido2": "software key", "pin+fido2": "software key",
+}
+
+
+def available_protections() -> tuple[list[str], str]:
+    """Protection choices to offer, and a hint about why the TPM ones are missing (if they are)."""
+    keys = ["pin", "fido2", "pin+fido2"]
+    usable, why = tpm.status()
+    if usable:
+        keys = ["tpm+pin", "tpm+pin+fido2"] + keys
+    return keys, ("" if usable else why)
+
 TYPE_TEXT = {
     "login": "Log in without a password",
     "2fa": "Confirm your login (second step after your password)",
@@ -200,7 +219,8 @@ class Window(Adw.ApplicationWindow):
         if not devices:
             group.add(_plain_row("Nothing enrolled yet", "On a site's profile page choose Add a device, then press “Open on this device”."))
         for d in devices:
-            row = _plain_row(d.origin, f"{d.username or 'account'} · {d.label} · {PROTECTION_LABELS.get(d.protection, d.protection)}")
+            proof = " · verified by the site" if d.attestation == "tpm" else ""
+            row = _plain_row(d.origin, f"{d.username or 'account'} · {d.label} · {PROTECTION_LABELS.get(d.protection, d.protection)}{proof}")
             btn = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
             btn.add_css_class("flat")
             btn.set_tooltip_text("Remove from this computer")
@@ -256,13 +276,17 @@ class Window(Adw.ApplicationWindow):
         label_row = Adw.EntryRow(title="Name")
         label_row.set_text(default_label())
         form.add(label_row)
+        protections, tpm_hint = available_protections()
         combo = Adw.ComboRow(title="Protect the key with")
-        combo.set_model(Gtk.StringList.new(list(PROTECTION_LABELS.values())))
+        combo.set_model(Gtk.StringList.new([PROTECTION_LABELS[k] for k in protections]))
         combo.set_selected(0)
         form.add(combo)
         col.append(form)
         col.append(_label("A PIN is typed each time you approve. A security key (FIDO2) must be plugged in and touched. "
-                          "The key that signs logins is stored encrypted and cannot be used without them.", ["caption", "dim-label"]))
+                          "With the TPM option the signing key lives inside this computer's TPM chip and never leaves it; "
+                          "the chip itself checks the PIN and limits wrong tries.", ["caption", "dim-label"]))
+        if tpm_hint:
+            col.append(_label("TPM option not available: " + tpm_hint, ["caption", "dim-label"]))
         col.append(self.notice)
         error = _label("", ["error"])
         error.set_visible(False)
@@ -277,7 +301,7 @@ class Window(Adw.ApplicationWindow):
         col.append(cancel)
 
         def go(*_):
-            protection = list(PROTECTION_LABELS.keys())[combo.get_selected()]
+            protection = protections[combo.get_selected()]
             error.set_visible(False)
             self.set_busy(True, [add, cancel, label_row, combo])
             ui = GtkInteraction(self)
@@ -286,7 +310,12 @@ class Window(Adw.ApplicationWindow):
             def work():
                 try:
                     device = self.service.enroll(req, label, protection, ui)
-                    GLib.idle_add(self.show_result, True, f"This computer is now enrolled for {device.username or 'your account'} on {req.origin}.")
+                    text = f"This computer is now enrolled for {device.username or 'your account'} on {req.origin}."
+                    if device.attestation == "tpm":
+                        text += " The site verified that the key lives in this computer's TPM chip."
+                    elif protection.startswith("tpm") and self.service.last_note:
+                        text += " " + self.service.last_note
+                    GLib.idle_add(self.show_result, True, text)
                 except Cancelled:
                     GLib.idle_add(self._back, [add, cancel, label_row, combo], error, "")
                 except Exception as exc:  # shown to the user, not swallowed

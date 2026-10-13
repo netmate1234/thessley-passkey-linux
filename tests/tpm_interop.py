@@ -20,7 +20,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
-TPM_PHP = ROOT.parent / "wp_opsec" / "infra" / "thessley_passkey" / "src" / "Tpm.php"
+# IMPL=drupal (default) or IMPL=wp selects which server implementation is under test.
+IMPL = os.environ.get("IMPL", "drupal")
+_WP = ROOT.parent / "wp_opsec"
+if IMPL == "wp":
+    TPM_PHP = _WP / "thessley-security-hardening" / "includes" / "modules" / "passkey-login" / "class-tpm.php"
+    SHIM = ROOT / "tests" / "php" / "tpm_cli_wp.php"
+else:
+    TPM_PHP = _WP / "infra" / "thessley_passkey" / "src" / "Tpm.php"
+    SHIM = ROOT / "tests" / "php" / "tpm_cli.php"
 if not TPM_PHP.exists():
     TPM_PHP = Path(os.environ["TPM_PHP"])
 
@@ -36,7 +44,7 @@ b64 = lambda b: base64.b64encode(b).decode()
 
 
 def php(**req):
-    out = subprocess.run(["php", str(ROOT / "tests" / "php" / "tpm_cli.php"), str(TPM_PHP)], input=json.dumps(req), capture_output=True, text=True)
+    out = subprocess.run(["php", str(SHIM), str(TPM_PHP)], input=json.dumps(req), capture_output=True, text=True)
     return json.loads(out.stdout)
 
 

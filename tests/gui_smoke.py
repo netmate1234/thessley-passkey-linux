@@ -140,7 +140,7 @@ try:
     ok("enrol window reaches the success page", r["done"] and any("enrolled" in " ".join(x.get("texts", [])) for x in r["log"]), r)
     st = s.get(f"{BASE}/thessley/v1/passkey/enroll/{e['request_id']}/status").json()
     ok("site shows the device with the label typed in the window", st.get("status") == "approved" and st.get("label") == "GUI test PC", st)
-    ok("one device is stored, PIN-protected", len(svc.vault.all()) == 1 and svc.vault.all()[0].protection == "pin")
+    ok("one device is stored, PIN-protected" + (" (key in the TPM)" if os.environ.get("THESSLEY_TPM_TCTI") else ""), len(svc.vault.all()) == 1 and svc.vault.all()[0].protection == ("tpm+pin" if os.environ.get("THESSLEY_TPM_TCTI") else "pin"))
 
     print("== approve: wrong PIN, then the right one")
     b, st = start_login()

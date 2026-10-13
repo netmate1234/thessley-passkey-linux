@@ -411,6 +411,8 @@ class Attestor:
     @_mapped
     def certify(self, key_blobs: dict, key_auth: bytes, nonce: bytes) -> dict:
         """Have the AK sign a statement about the signing key, bound to `nonce`."""
+        if len(nonce) > 32:  # some chips (AMD) take at most a SHA-256 digest of qualifying data; the site accepts its hash
+            nonce = hashlib.sha256(nonce).digest()
         key = _load_key(self.t, key_blobs, key_auth)
         attest, signature = self.t.certify(key, key_auth, self.ak, nonce)
         public, _ = self.t.read_public(key)

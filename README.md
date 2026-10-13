@@ -23,6 +23,9 @@ python-fido2 1.2+ for security keys (Ubuntu 26.04 ships 2.0; older: `pip install
 The key needs to be reachable by your user (`/dev/hidraw*`). On most desktops that is
 automatic; if not, install `libfido2-1` (it ships the udev rules) and re-plug the key.
 The key must support **hmac-secret** (YubiKey 5, Nitrokey 3, SoloKeys, most FIDO2 keys).
+Verified on hardware with a YubiKey 5 (OTP+FIDO+CCID): `tests/hardware_fido2_check.py` passes.
+Creating the credential needs the key's own PIN once (YubiKeys require it when a PIN is set); after
+that, approving only needs a touch.
 
 ## Enrol this computer
 1. On the site, log in, open your profile page, press **Add a device**, then **Open on this device**.

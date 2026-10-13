@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Thessley Passkey
+GenericName=Passkey login
+Comment=Approve Thessley Passkey logins on this computer
+Exec=@EXEC@ %u
+Icon=thessley-passkey
+Terminal=false
+Categories=System;Utility;Security;
+Keywords=passkey;login;2fa;thessley;
+MimeType=x-scheme-handler/thessleypasskey;
+StartupNotify=true

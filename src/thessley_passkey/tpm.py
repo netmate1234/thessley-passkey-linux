@@ -100,9 +100,32 @@ def _map_error(exc, constants) -> TpmError:
     return TpmError(f"TPM error: {text}")
 
 
+def _mapped(method):
+    """Turn the library's exceptions into our own at the call, not only when the session closes."""
+    import functools
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        _, constants, _, _, TSS2 = _lib()
+        try:
+            return method(self, *args, **kwargs)
+        except TSS2 as exc:
+            raise _map_error(exc, constants) from exc
+    return wrapper
+
+
 def _track(esys, handle):
     esys._thessley_handles.append(handle)
     return handle
+
+
+def _release(esys, handle) -> None:
+    """Free a loaded object now. A TPM only holds a few at once; the kernel's resource manager hides that
+    on a real machine, but code that works with three or fewer works everywhere."""
+    with contextlib.suppress(Exception):
+        esys.flush_context(handle)
+    if handle in esys._thessley_handles:
+        esys._thessley_handles.remove(handle)
 
 
 def _storage_primary(esys):
@@ -155,6 +178,7 @@ def _load_key(esys, blobs: dict, auth: bytes):
     private, _ = types.TPM2B_PRIVATE.unmarshal(_unb64(blobs["private"]))
     public, _ = types.TPM2B_PUBLIC.unmarshal(_unb64(blobs["public"]))
     handle = _track(esys, esys.load(parent, private, public))
+    _release(esys, parent)
     esys.tr_set_auth(handle, auth)
     return handle
 
@@ -171,3 +195,195 @@ def sign(blobs: dict, auth: bytes, message: bytes, connection: str | None = None
 def check_auth(blobs: dict, auth: bytes, connection: str | None = None) -> None:
     """Raises TpmWrongAuth if `auth` is not the key's password (counts as one attempt)."""
     sign(blobs, auth, b"thessley-passkey-auth-check", connection)
+
+
+# ---- Phase 2: proof for the site -------------------------------------------------------------------------
+
+EK_CERT_NV = {"ecc": 0x01C0000A}
+EK_CHAIN_NV = 0x01C00100          # Intel keeps the manufacturer's intermediate certificates here
+EK_PERSISTENT = 0x81010001        # the default EK handle, when the maker provisioned one
+MAX_CHAIN = 8
+AIA_TIMEOUT = 10
+
+
+def _split_der_certs(blob: bytes) -> list[bytes]:
+    """Back-to-back DER certificates (as found in the TPM's NV storage)."""
+    certs, i = [], 0
+    while i + 4 <= len(blob) and blob[i] == 0x30:
+        if blob[i + 1] & 0x80:
+            n = blob[i + 1] & 0x7F
+            length, header = int.from_bytes(blob[i + 2:i + 2 + n], "big"), 2 + n
+        else:
+            length, header = blob[i + 1], 2
+        if i + header + length > len(blob):
+            break
+        certs.append(blob[i:i + header + length])
+        i += header + length
+    return certs
+
+
+def _fetch_issuers(chain: list[bytes], fetch=None) -> list[bytes]:
+    """Follow 'CA Issuers' links (https only) from the last certificate until a self-signed one."""
+    from cryptography import x509
+    from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID
+
+    def default_fetch(url: str) -> bytes | None:
+        import requests
+        if not url.startswith("https://"):
+            return None
+        try:
+            resp = requests.get(url, timeout=AIA_TIMEOUT, allow_redirects=False)
+        except requests.RequestException:
+            return None
+        return resp.content if resp.status_code == 200 and len(resp.content) < 16384 else None
+
+    fetch = fetch or default_fetch
+    chain = list(chain)
+    while len(chain) < MAX_CHAIN:
+        last = x509.load_der_x509_certificate(chain[-1])
+        if last.issuer == last.subject:
+            break
+        try:
+            aia = last.extensions.get_extension_for_oid(ExtensionOID.AUTHORITY_INFORMATION_ACCESS).value
+        except x509.ExtensionNotFound:
+            break
+        urls = [d.access_location.value for d in aia if d.access_method == AuthorityInformationAccessOID.CA_ISSUERS]
+        data = None
+        for u in urls:
+            data = fetch(u)
+            if data:
+                break
+        if not data:
+            break
+        try:
+            issuer = x509.load_der_x509_certificate(data)
+        except ValueError:
+            break
+        if issuer.public_bytes(serialization.Encoding.DER) in chain:
+            break
+        chain.append(issuer.public_bytes(serialization.Encoding.DER))
+    return chain
+
+
+class Attestor:
+    """One enrolment's worth of attestation. Keep it open between asking the site for its challenge and answering."""
+
+    def __init__(self, connection: str | None = None, ek_certs: list[bytes] | None = None, fetch=None):
+        self.connection = connection
+        self._ek_certs_override = ek_certs
+        self._fetch = fetch
+        self._cm = None
+        self.esys = None
+
+    def __enter__(self):
+        self._cm = _session(self.connection)
+        self.esys = self._cm.__enter__()
+        try:
+            self._setup()
+        except BaseException:
+            self._cm.__exit__(*__import__("sys").exc_info())  # release whatever was loaded before failing
+            raise
+        return self
+
+    def _setup(self):
+        _, constants, types, _, _ = _lib()
+        A = constants.TPMA_OBJECT
+        self.parent = _storage_primary(self.esys)
+        # Attestation key: restricted signing key, fixed to this chip, no password (it lives for one enrolment).
+        attrs = A.FIXEDTPM | A.FIXEDPARENT | A.SENSITIVEDATAORIGIN | A.USERWITHAUTH | A.RESTRICTED | A.SIGN_ENCRYPT | A.NODA
+        template = types.TPM2B_PUBLIC.parse("ecc256:ecdsa-sha256:null", objectAttributes=attrs)
+        private, public, *_ = self.esys.create(self.parent, types.TPM2B_SENSITIVE_CREATE(), template)
+        self.ak = _track(self.esys, self.esys.load(self.parent, private, public))
+        _release(self.esys, self.parent)
+        self.ak_public_area = public.publicArea
+
+    def __exit__(self, *exc):
+        return self._cm.__exit__(*exc)
+
+    # -- endorsement key and its certificates --------------------------------------------------
+
+    def _create_ek(self):
+        _, constants, types, tpm_utils, _ = _lib()
+        template = tpm_utils.ek_template.lookup("EK-ECC256").template
+        handle, *_ = self.esys.create_primary(types.TPM2B_SENSITIVE_CREATE(), template, primary_handle=constants.ESYS_TR.RH_ENDORSEMENT)
+        return _track(self.esys, handle)
+
+    def _nv_read(self, index: int) -> bytes | None:
+        _, constants, types, _, TSS2 = _lib()
+        try:
+            nv = self.esys.tr_from_tpmpublic(index)
+            public = self.esys.nv_read_public(nv)[0]
+            size = public.nvPublic.dataSize
+            out, offset = b"", 0
+            while offset < size:
+                chunk = min(512, size - offset)
+                out += bytes(self.esys.nv_read(nv, chunk, offset, auth_handle=constants.ESYS_TR.RH_OWNER))
+                offset += chunk
+            return out
+        except TSS2:
+            return None
+
+    @_mapped
+    def ek_certs(self) -> list[bytes]:
+        """The EK certificate first, then every intermediate we can find, as DER."""
+        if self._ek_certs_override is not None:
+            return list(self._ek_certs_override)
+        leaf = self._nv_read(EK_CERT_NV["ecc"])
+        if not leaf:
+            raise TpmError("This TPM has no EK certificate, so it cannot be verified by a site.")
+        chain = _split_der_certs(leaf)[:1]
+        extra = self._nv_read(EK_CHAIN_NV)
+        if extra:
+            chain += _split_der_certs(extra)
+        return _fetch_issuers(chain, self._fetch)
+
+    @_mapped
+    def ek_point(self) -> tuple[int, int]:
+        """The chip's endorsement key (P-256 point)."""
+        ek = self._create_ek()
+        try:
+            pub = self.esys.read_public(ek)[0].publicArea.unique.ecc
+            return int.from_bytes(bytes(pub.x), "big"), int.from_bytes(bytes(pub.y), "big")
+        finally:
+            _release(self.esys, ek)
+
+    @_mapped
+    def ek_matches_certificate(self, cert_der: bytes) -> bool:
+        """The EK the chip derives must be the key its certificate vouches for."""
+        from cryptography import x509
+        nums = x509.load_der_x509_certificate(cert_der).public_key().public_numbers()
+        return (nums.x, nums.y) == self.ek_point()
+
+    # -- the three steps ------------------------------------------------------------------------
+
+    def ak_public(self) -> bytes:
+        """TPMT_PUBLIC of the attestation key (what the site names the credential after)."""
+        return self.ak_public_area.marshal()
+
+    @_mapped
+    def activate(self, credential_blob: bytes, secret: bytes) -> bytes:
+        """TPM2_ActivateCredential: recovers the site's secret only if this chip holds both the EK and the AK."""
+        _, constants, types, _, _ = _lib()
+        cred, _ = types.TPM2B_ID_OBJECT.unmarshal(credential_blob)
+        enc, _ = types.TPM2B_ENCRYPTED_SECRET.unmarshal(secret)
+        session = _track(self.esys, self.esys.start_auth_session(
+            constants.ESYS_TR.NONE, constants.ESYS_TR.NONE, constants.TPM2_SE.POLICY,
+            types.TPMT_SYM_DEF(algorithm=constants.TPM2_ALG.NULL), constants.TPM2_ALG.SHA256))
+        self.esys.policy_secret(constants.ESYS_TR.RH_ENDORSEMENT, session)
+        ek = self._create_ek()
+        try:
+            out = self.esys.activate_credential(self.ak, ek, cred, enc, session1=constants.ESYS_TR.PASSWORD, session2=session)
+        finally:
+            _release(self.esys, ek)
+            _release(self.esys, session)
+        return bytes(out)
+
+    @_mapped
+    def certify(self, key_blobs: dict, key_auth: bytes, nonce: bytes) -> dict:
+        """Have the AK sign a statement about the signing key, bound to `nonce`."""
+        _, constants, types, _, _ = _lib()
+        key = _load_key(self.esys, key_blobs, key_auth)
+        scheme = types.TPMT_SIG_SCHEME(scheme=constants.TPM2_ALG.NULL)
+        attest, signature = self.esys.certify(key, self.ak, nonce, scheme, session1=constants.ESYS_TR.PASSWORD, session2=constants.ESYS_TR.PASSWORD)
+        key_public = self.esys.read_public(key)[0].publicArea
+        return {"attest": bytes(attest.attestationData), "signature": signature.marshal(), "key_public": key_public.marshal()}

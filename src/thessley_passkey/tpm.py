@@ -85,6 +85,9 @@ def _map_error(exc: Exception) -> TpmError:
             return TpmLockedOut("The TPM has locked out password attempts for a while (too many wrong PINs).")
         if exc.is_wrong_auth:
             return TpmWrongAuth("Wrong PIN.")
+        if exc.rc == 0x80280400:  # TBS_E_COMMAND_BLOCKED: Windows lets only administrators run ActivateCredential
+            return TpmError("Windows blocks this TPM command for normal programs. Close Thessley Passkey, start it with "
+                            "'Run as administrator' and enrol again.")
         if exc.is_out_of_memory:
             return TpmError("The TPM is busy with other programs' objects. Close other TPM-using applications and try again.")
         return TpmError(f"TPM error 0x{exc.rc:X} (command 0x{exc.command:X})")

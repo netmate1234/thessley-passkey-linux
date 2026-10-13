@@ -12,7 +12,7 @@ import threading
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Qt
 
-from . import __version__, link, vault
+from . import __version__, elevate, link, vault
 from .core import Service, default_label
 from .interaction import Cancelled, Interaction
 from .uicommon import (
@@ -333,6 +333,15 @@ class Window(QtWidgets.QMainWindow):
             def go():
                 protection = combo.currentData()
                 label = name.text()
+                if elevate.needed_for(protection):
+                    # Windows only lets administrators prove a key is in the TPM: ask permission, reopen on this link.
+                    if req.raw and elevate.relaunch(req.raw):
+                        self.close()
+                    else:
+                        self.error.setText("To prove the key is in the TPM, Windows needs your permission "
+                                           "(administrator). Press the button again and choose Yes, or pick a protection without the TPM.")
+                        self.error.show()
+                    return
                 self._busy([add, cancel, name, combo])
                 ui = QtInteraction(self.bridge)
 

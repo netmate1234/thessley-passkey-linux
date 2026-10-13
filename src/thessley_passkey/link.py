@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlsplit
 
 TYPES = ("login", "2fa", "enroll")
@@ -65,6 +65,7 @@ class AuthRequest:
     ip: str = ""       # display only
     country: str = ""  # display only
     username: str = "" # display only / device hint
+    raw: str = field(default="", compare=False)  # the link as received, to reopen the app on it
 
 
 def parse(raw: str) -> AuthRequest | None:
@@ -95,4 +96,5 @@ def parse(raw: str) -> AuthRequest | None:
         ip=clean_text(q.get("ip"), 45),
         country=clean_text(q.get("country"), 60),
         username=clean_text(q.get("username"), 100),
+        raw=raw.strip(),
     )

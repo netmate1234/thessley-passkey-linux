@@ -260,6 +260,81 @@ class VaultTests(unittest.TestCase):
             self.assertEqual(oct(v.path.parent.stat().st_mode & 0o777), "0o700")
 
 
+class FakeWinreg:
+    """Just enough of the Windows registry to see what winsetup writes."""
+    HKEY_CURRENT_USER = "HKCU"
+    REG_SZ = 1
+
+    def __init__(self):
+        self.keys = {}
+
+    def CreateKey(self, root, path):
+        outer = self
+        self.keys.setdefault((root, path), {})
+
+        class K:
+            def __enter__(self_):
+                return (root, path)
+
+            def __exit__(self_, *a):
+                return False
+        return K()
+
+    def SetValueEx(self, key, name, _r, _t, value):
+        self.keys[key][name] = value
+
+    def OpenKey(self, root, path):
+        if (root, path) not in self.keys:
+            raise FileNotFoundError(path)
+
+        class K:
+            def __enter__(self_):
+                return (root, path)
+
+            def __exit__(self_, *a):
+                return False
+        return K()
+
+    def QueryValueEx(self, key, name):
+        return (self.keys[key][name], 1)
+
+    def DeleteKey(self, root, path):
+        if (root, path) not in self.keys:
+            raise FileNotFoundError(path)
+        del self.keys[(root, path)]
+
+
+class WindowsGlueTests(unittest.TestCase):
+    def test_link_handler_is_registered_for_the_current_user_only(self):
+        from thessley_passkey import winsetup
+        reg = FakeWinreg()
+        command = winsetup.register(reg)
+        self.assertIn(("HKCU", r"Software\Classes\thessleypasskey"), reg.keys)
+        self.assertEqual(reg.keys[("HKCU", r"Software\Classes\thessleypasskey")]["URL Protocol"], "")
+        self.assertEqual(reg.keys[("HKCU", r"Software\Classes\thessleypasskey\shell\open\command")][""], command)
+        self.assertTrue(command.endswith('"%1"'))
+        self.assertEqual(winsetup.registered_command(reg), command)
+
+    def test_unregister_removes_everything_and_is_repeatable(self):
+        from thessley_passkey import winsetup
+        reg = FakeWinreg()
+        winsetup.register(reg)
+        winsetup.unregister(reg)
+        self.assertIsNone(winsetup.registered_command(reg))
+        winsetup.unregister(reg)  # nothing left: must not raise
+
+    def test_windows_data_folder_is_under_localappdata(self):
+        os.environ["LOCALAPPDATA"] = r"C:\Users\me\AppData\Local"
+        self.assertTrue(str(vault.data_dir(nt=True)).endswith("ThessleyPasskey"))
+        self.assertIn("AppData", str(vault.data_dir(nt=True)))
+
+    def test_diagnostics_never_crash_and_hold_no_secrets(self):
+        from thessley_passkey import diagnose
+        text = diagnose.report()
+        self.assertIn("Thessley Passkey diagnostics", text)
+        self.assertNotIn("BEGIN", text)
+
+
 class SortTests(unittest.TestCase):
     def test_sites_are_listed_alphabetically_ignoring_case(self):
         def dev(i, origin, user="u", label="l"):

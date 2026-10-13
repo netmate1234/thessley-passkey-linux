@@ -76,9 +76,18 @@ def prf_secret(extension_results) -> bytes | None:
 def _client(interaction: Interaction):
     try:
         from fido2.client import ClientError, DefaultClientDataCollector, Fido2Client, UserInteraction
-        from fido2.hid import CtapHidDevice
     except ImportError as exc:  # pragma: no cover
         raise ProtectionError("The python3-fido2 package is needed for security-key protection.") from exc
+
+    if os.name == "nt":
+        # Windows blocks direct USB access to security keys for normal users, so the request goes through
+        # Windows' own passkey dialog (which asks for the key's PIN and the touch itself).
+        from fido2.client.windows import WindowsClient
+        if not WindowsClient.is_available():
+            raise ProtectionError("Windows' security-key support (WebAuthn) is not available on this computer.")
+        return WindowsClient(DefaultClientDataCollector("https://" + RP_ID), allow_hmac_secret=True), ClientError
+
+    from fido2.hid import CtapHidDevice
 
     class UI(UserInteraction):
         def prompt_up(self):
@@ -98,6 +107,12 @@ def _client(interaction: Interaction):
     if not devices:
         raise NoSecurityKey("No security key found. Plug it in and try again.")
     return Fido2Client(devices[0], DefaultClientDataCollector("https://" + RP_ID), user_interaction=UI()), ClientError
+
+
+def _prompt_text(first_time: bool) -> str:
+    if os.name == "nt":
+        return "Follow the Windows security key prompt: enter your key's PIN if asked, then touch the key."
+    return "Touch your security key to set it up." if first_time else "Touch your security key now."
 
 
 def _run(interaction: Interaction, action):
@@ -129,7 +144,7 @@ def fido2_create(interaction: Interaction) -> tuple[dict, bytes]:
             "user": {"id": os.urandom(16), "name": "thessley-passkey", "displayName": "Thessley Passkey"},
             "challenge": os.urandom(32),
             "pubKeyCredParams": [{"type": "public-key", "alg": -7}],
-            "authenticatorSelection": {"userVerification": "discouraged", "residentKey": "discouraged"},
+            "authenticatorSelection": {"userVerification": "discouraged", "residentKey": "discouraged", "authenticatorAttachment": "cross-platform"},
             "extensions": {"prf": {}},
         })
         reg = client.make_credential(options)
@@ -137,7 +152,7 @@ def fido2_create(interaction: Interaction) -> tuple[dict, bytes]:
             raise ProtectionError("This security key does not support hmac-secret, which is needed to protect the key.")
         return reg.response.attestation_object.auth_data.credential_data.credential_id
 
-    interaction.notify("Touch your security key to set it up.")
+    interaction.notify(_prompt_text(True))
     credential_id = _run(interaction, make)
     params = {"rp_id": RP_ID, "credential_id": base64.b64encode(credential_id).decode(), "salt": base64.b64encode(os.urandom(32)).decode()}
     return params, fido2_secret(params, interaction)
@@ -157,8 +172,36 @@ def fido2_secret(params: dict, interaction: Interaction) -> bytes:
         response = client.get_assertion(options).get_response(0)
         return prf_secret(response.client_extension_results)
 
-    interaction.notify("Touch your security key now.")
+    interaction.notify(_prompt_text(False))
     secret = _run(interaction, get)
     if not secret or len(secret) != 32:
         raise ProtectionError("The security key did not return a secret (hmac-secret unsupported?).")
     return bytes(secret)
+
+
+def describe_security_keys() -> list[str]:
+    """Lines for the diagnostics report: how this computer reaches a FIDO2 key."""
+    try:
+        import fido2
+    except ImportError:
+        return ["python-fido2 is not installed"]
+    out = [f"python-fido2 {getattr(fido2, '__version__', '?')}"]
+    if os.name == "nt":
+        try:
+            from fido2.client.windows import WindowsClient
+            out.append(f"Windows WebAuthn available: {WindowsClient.is_available()}")
+            try:
+                from fido2.client import win_api
+                out.append(f"WebAuthn API version: {win_api.WEBAUTHN_API_VERSION} (6 or higher is needed for the security-key secret)")
+            except Exception as exc:
+                out.append(f"WebAuthn API version unknown: {exc}")
+        except Exception as exc:
+            out.append(f"Windows WebAuthn client not usable: {exc}")
+        return out
+    try:
+        from fido2.hid import CtapHidDevice
+        devices = list(CtapHidDevice.list_devices())
+        out.append(f"USB security keys found: {len(devices)}")
+    except Exception as exc:
+        out.append(f"could not list security keys: {exc}")
+    return out

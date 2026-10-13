@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from . import __version__, link, protectors, protocol, vault
@@ -69,13 +70,35 @@ def cli(argv: list[str]) -> int:
     return 0
 
 
+def _pick_ui() -> str:
+    """Windows uses the Qt window; Linux the GTK one (THESSLEY_UI=qt|gtk overrides)."""
+    choice = os.environ.get("THESSLEY_UI", "").lower()
+    if choice in ("qt", "gtk"):
+        return choice
+    return "qt" if os.name == "nt" else "gtk"
+
+
 def main() -> int:
     argv = sys.argv[1:]
     if argv[:1] == ["--version"]:
         print(__version__)
         return 0
+    if argv[:1] in (["--register-handler"], ["--unregister-handler"]):
+        from . import winsetup
+        if argv[0] == "--register-handler":
+            print("Registered:", winsetup.register())
+        else:
+            winsetup.unregister()
+            print("Link handler removed.")
+        return 0
+    if argv[:1] == ["--diagnose"]:
+        from . import diagnose
+        return diagnose.run()
     if argv and argv[0] in ("list", "remove", "enroll", "respond", "-h", "--help"):
         return cli(argv)
+    if _pick_ui() == "qt":
+        from .ui_qt import run as run_qt
+        return run_qt()
     from .ui import run  # GTK is only needed for the window
     return run()
 

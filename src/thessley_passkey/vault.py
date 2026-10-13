@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import contextlib
-import fcntl
 import json
 import os
 import time
@@ -39,9 +38,37 @@ def _b64d(s: str) -> bytes:
     return base64.b64decode(s.encode("ascii"))
 
 
-def data_dir() -> Path:
+def data_dir(nt: bool | None = None) -> Path:
+    if os.name == "nt" if nt is None else nt:  # per-user, private by default (%LOCALAPPDATA% is inside the user's profile)
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return Path(base) / "ThessleyPasskey"
     base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     return Path(base) / "thessley-passkey"
+
+
+def _lock(fh) -> None:
+    """Exclusive lock on an open file, blocking, on both Unix and Windows."""
+    if os.name == "nt":
+        import msvcrt
+        fh.seek(0)
+        while True:
+            try:
+                msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)  # retries for about 10 s per call
+                return
+            except OSError:
+                continue
+    import fcntl
+    fcntl.flock(fh, fcntl.LOCK_EX)
+
+
+def _unlock(fh) -> None:
+    if os.name == "nt":
+        import msvcrt
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+    import fcntl
+    fcntl.flock(fh, fcntl.LOCK_UN)
 
 
 @dataclass
@@ -114,14 +141,15 @@ class Vault:
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(self.path.parent, 0o700)
-        with open(self.path.parent / ".lock", "a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":  # on Windows the profile folder is already private to the user
+            os.chmod(self.path.parent, 0o700)
+        with open(self.path.parent / ".lock", "a+") as lock:
+            _lock(lock)
             try:
                 yield
             finally:
-                fcntl.flock(lock, fcntl.LOCK_UN)
+                _unlock(lock)
 
     def _read(self) -> list[Device]:
         try:
@@ -132,7 +160,7 @@ class Vault:
 
     def _write(self, devices: list[Device]) -> None:
         tmp = self.path.with_suffix(".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump({"version": 1, "devices": [asdict(d) for d in devices]}, fh, indent=2)
             fh.flush()

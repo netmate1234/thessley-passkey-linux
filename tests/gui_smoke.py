@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 os.environ["THESSLEY_PASSKEY_DEV"] = "1"
 os.environ.setdefault("GSK_RENDERER", "cairo")
 os.environ.setdefault("GDK_BACKEND", "x11")
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import requests
 from thessley_passkey import core, link, vault
@@ -90,8 +91,65 @@ def run_gui(link_text, script_json, store_dir):
     print("GUIRESULT " + json.dumps({"log": log, "done": state["i"] >= len(steps)}))
 
 
+def run_gui_qt(link_text, script_json, store_dir):
+    """Same scripted run as run_gui(), against the Qt window (THESSLEY_UI=qt)."""
+    from PySide6 import QtCore, QtWidgets
+    from thessley_passkey import ui_qt
+
+    os.environ["XDG_DATA_HOME"] = store_dir
+    app = QtWidgets.QApplication(["thessley-passkey"])
+    request = link.parse(link_text) if link_text else None
+    service = core.Service(vault.Vault(Path(store_dir) / "thessley-passkey" / "devices.json"))
+    window = ui_qt.Window(service, request, bool(link_text), "That link is not a valid Thessley Passkey link." if link_text and request is None else "")
+    window.show()
+    steps, log, state = json.loads(script_json), [], {"i": 0, "ticks": 0}
+
+    def visible_texts():
+        return [w.text() for w in window.findChildren(QtWidgets.QLabel) if w.isVisibleTo(window) and w.text()]
+
+    def tick():
+        state["ticks"] += 1
+        if state["ticks"] > 400:
+            log.append({"error": "timeout", "step": state["i"], "texts": visible_texts()[:6]})
+            app.quit()
+            return
+        if state["i"] >= len(steps):
+            app.quit()
+            return
+        step = steps[state["i"]]
+        kind = step[0]
+        if kind == "click":
+            for b in window.findChildren(QtWidgets.QPushButton):
+                if b.text() == step[1] and b.isEnabled() and b.isVisibleTo(window):
+                    b.click(); state["i"] += 1
+                    break
+        elif kind == "entry":
+            edit = window.findChild(QtWidgets.QLineEdit, "name")
+            if edit is not None:
+                edit.setText(step[1]); state["i"] += 1
+        elif kind == "pin":
+            dlg = app.activeModalWidget()
+            if isinstance(dlg, ui_qt.PinDialog):
+                dlg.first.setText(step[1])
+                if dlg.second is not None:
+                    dlg.second.setText(step[1])
+                dlg.accept(); state["i"] += 1
+        elif kind == "expect_text":
+            if any(step[1] in t for t in visible_texts()):
+                log.append({"seen": step[1]}); state["i"] += 1
+        elif kind == "expect_page":
+            if window.page_name() == step[1]:
+                log.append({"page": step[1], "texts": visible_texts()}); state["i"] += 1
+
+    timer = QtCore.QTimer()
+    timer.timeout.connect(tick)
+    timer.start(150)
+    app.exec()
+    print("GUIRESULT " + json.dumps({"log": log, "done": state["i"] >= len(steps)}))
+
+
 if len(sys.argv) > 1 and sys.argv[1] == "child":
-    run_gui(sys.argv[2], sys.argv[3], sys.argv[4])
+    (run_gui_qt if os.environ.get("THESSLEY_UI") == "qt" else run_gui)(sys.argv[2], sys.argv[3], sys.argv[4])
     sys.exit(0)
 
 if not SSH:

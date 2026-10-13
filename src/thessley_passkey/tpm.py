@@ -222,11 +222,14 @@ def _split_der_certs(blob: bytes) -> list[bytes]:
     return certs
 
 
-def _fetch_issuers(chain: list[bytes], fetch=None) -> list[bytes]:
-    """Follow 'CA Issuers' links (https only) from the last certificate until a self-signed one."""
-    from cryptography import x509
-    from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID
+def _cert(der: bytes):
+    """Lenient certificate reader: some TPM makers' certificates are not strictly canonical DER."""
+    from asn1crypto import x509 as a1
+    return a1.Certificate.load(der)
 
+
+def _fetch_issuers(chain: list[bytes], fetch=None) -> list[bytes]:
+    """Complete the chain: for the certificate whose issuer is missing, follow its 'CA Issuers' link (https only)."""
     def default_fetch(url: str) -> bytes | None:
         import requests
         if not url.startswith("https://"):
@@ -240,28 +243,30 @@ def _fetch_issuers(chain: list[bytes], fetch=None) -> list[bytes]:
     fetch = fetch or default_fetch
     chain = list(chain)
     while len(chain) < MAX_CHAIN:
-        last = x509.load_der_x509_certificate(chain[-1])
-        if last.issuer == last.subject:
+        certs = [_cert(c) for c in chain]
+        subjects = {c.subject.dump() for c in certs}
+        missing = next((c for c in certs if c.issuer.dump() != c.subject.dump() and c.issuer.dump() not in subjects), None)
+        if missing is None:
             break
-        try:
-            aia = last.extensions.get_extension_for_oid(ExtensionOID.AUTHORITY_INFORMATION_ACCESS).value
-        except x509.ExtensionNotFound:
-            break
-        urls = [d.access_location.value for d in aia if d.access_method == AuthorityInformationAccessOID.CA_ISSUERS]
-        data = None
-        for u in urls:
-            data = fetch(u)
-            if data:
+        urls = []
+        for access in (missing.authority_information_access_value or []):
+            if access["access_method"].native == "ca_issuers" and access["access_location"].name == "uniform_resource_identifier":
+                urls.append(access["access_location"].native)
+        found = None
+        for url in urls:
+            data = fetch(url)
+            if not data:
+                continue
+            try:
+                issuer = _cert(data)
+            except ValueError:
+                continue
+            if issuer.subject.dump() == missing.issuer.dump():
+                found = data
                 break
-        if not data:
+        if found is None:
             break
-        try:
-            issuer = x509.load_der_x509_certificate(data)
-        except ValueError:
-            break
-        if issuer.public_bytes(serialization.Encoding.DER) in chain:
-            break
-        chain.append(issuer.public_bytes(serialization.Encoding.DER))
+        chain.append(found)
     return chain
 
 
@@ -350,9 +355,10 @@ class Attestor:
     @_mapped
     def ek_matches_certificate(self, cert_der: bytes) -> bool:
         """The EK the chip derives must be the key its certificate vouches for."""
-        from cryptography import x509
-        nums = x509.load_der_x509_certificate(cert_der).public_key().public_numbers()
-        return (nums.x, nums.y) == self.ek_point()
+        point = bytes(_cert(cert_der).public_key["public_key"].native)
+        if len(point) != 65 or point[0] != 4:
+            return False
+        return (int.from_bytes(point[1:33], "big"), int.from_bytes(point[33:], "big")) == self.ek_point()
 
     # -- the three steps ------------------------------------------------------------------------
 

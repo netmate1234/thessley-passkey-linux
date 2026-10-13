@@ -44,6 +44,8 @@ def cli(argv: list[str]) -> int:
         if a.cmd == "list":
             for d in vault.sort_devices(svc.vault.all()):
                 print(f"{d.id}  {d.origin}  {d.username or '-'}  {d.label}  [{d.protection}]")
+                if d.protection.startswith("tpm") and d.attestation != "tpm":
+                    print(f"    not verified by the site: {d.attestation_note or 'no reason recorded (enrolled before this was kept)'}")
         elif a.cmd == "remove":
             svc.vault.remove(a.device_id)
             print("Removed locally. Also revoke it on the site's profile page.")

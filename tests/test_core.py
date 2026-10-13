@@ -556,6 +556,18 @@ class TpmProtectionTests(unittest.TestCase):
         self.assertEqual(dev.attestation, "")
         self.assertIn("could not verify the TPM", self.svc.last_note)
 
+    def test_the_reason_is_kept_with_the_device_and_shown_in_its_summary(self):
+        from thessley_passkey import uicommon
+        self.server.refuse_tpm = True
+        dev = self.enroll()
+        stored = self.vault.all()[0]
+        self.assertIn("not one we trust", stored.attestation_note)
+        self.assertIn("not verified: ", uicommon.device_summary(stored))
+        self.server.refuse_tpm = False
+        ok = self.enroll()
+        self.assertEqual(ok.attestation_note, "")
+        self.assertNotIn("not verified", uicommon.device_summary(self.vault.all()[-1]))
+
     def test_software_devices_send_no_tpm_payload(self):
         svc = core.Service(self.vault, fido2=FakeFido2(), client_factory=self.server.factory, tpm=self.fake_tpm)
         svc.enroll(link.parse(mklink(type="enroll")), "PC", "pin", ScriptedUI(["123456"]))

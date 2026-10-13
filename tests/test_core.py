@@ -12,7 +12,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from thessley_passkey import core, link, protectors, protocol, vault
+from thessley_passkey import core, link, protectors, protocol, tpm as tpm_mod, vault
 from thessley_passkey.interaction import Interaction
 from thessley_passkey.protocol import ServerError
 
@@ -89,6 +89,30 @@ class FakeFido2:
             raise self.fail_with
         import hashlib
         return hashlib.sha256(b"key-secret" + params["credential_id"].encode() + params["salt"].encode()).digest()
+
+
+class FakeTpm:
+    """Behaves like the TPM layer: key never leaves, password checked inside, wrong tries counted."""
+
+    def __init__(self):
+        self.keys, self.wrong_tries = {}, 0
+
+    def create_key(self, auth):
+        key = ec.generate_private_key(ec.SECP256R1())
+        ident = base64.b64encode(os.urandom(8)).decode()
+        self.keys[ident] = (key, auth)
+        pub = key.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+        return {"public": base64.b64encode(pub).decode(), "private": ident}
+
+    def spki_from_public(self, public_blob):
+        return public_blob
+
+    def sign(self, blobs, auth, message):
+        key, expected = self.keys[blobs["private"]]
+        if auth != expected:
+            self.wrong_tries += 1
+            raise tpm_mod.TpmWrongAuth("Wrong PIN.")
+        return key.sign(message, ec.ECDSA(hashes.SHA256()))
 
 
 class ScriptedUI(Interaction):
@@ -324,6 +348,68 @@ class ServiceTests(unittest.TestCase):
         with self.assertRaises(ServerError) as ctx:
             self.svc.respond(self.login_req(), dev, True, ScriptedUI(["123456"]))
         self.assertEqual(ctx.exception.code, "thessley_expired")
+
+class TpmProtectionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.vault = vault.Vault(Path(self.tmp.name) / "devices.json")
+        self.server = FakeServer()
+        self.fake_tpm = FakeTpm()
+        self.svc = core.Service(self.vault, fido2=FakeFido2(), client_factory=self.server.factory, tpm=self.fake_tpm)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def enroll(self, protection="tpm+pin", pins=("123456", "123456")):
+        return self.svc.enroll(link.parse(mklink(type="enroll")), "PC", protection, ScriptedUI(pins))
+
+    def req(self, rid=RID):
+        self.server.rtype = "login"
+        return link.parse(mklink(id=rid))
+
+    def test_enrol_and_approve_with_the_key_in_the_tpm(self):
+        dev = self.enroll()
+        self.assertTrue(dev.uses_tpm)
+        self.assertEqual(dev.wrapped, {})           # nothing to unwrap on disk: the key is in the chip
+        self.assertEqual(self.svc.respond(self.req(), dev, True, ScriptedUI(["123456"])), "approved")
+
+    def test_the_stored_public_key_is_the_one_the_site_verifies(self):
+        dev = self.enroll()
+        site_key = self.server.keys[dev.credential_id].public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+        self.assertEqual(base64.b64decode(dev.public_key), site_key)
+
+    def test_wrong_pin_never_reaches_the_tpm_once_locked(self):
+        dev = self.enroll()
+        for _ in range(vault.MAX_FAILURES):
+            with self.assertRaises(core.WrongSecret):
+                self.svc.respond(self.req(), dev, True, ScriptedUI(["000000"]))
+        self.assertEqual(self.fake_tpm.wrong_tries, vault.MAX_FAILURES)
+        with self.assertRaises(vault.Locked):
+            self.svc.respond(self.req(), dev, True, ScriptedUI(["000000"]))
+        self.assertEqual(self.fake_tpm.wrong_tries, vault.MAX_FAILURES)   # the chip's own counter was not burned further
+
+    def test_tpm_plus_security_key_needs_both(self):
+        dev = self.enroll("tpm+pin+fido2")
+        self.assertEqual(self.svc.respond(self.req(), dev, True, ScriptedUI(["123456"])), "approved")
+        class Other(FakeFido2):
+            def fido2_secret(self, params, interaction):
+                return b"\x09" * 32
+        with self.assertRaises(core.WrongSecret):
+            core.Service(self.vault, fido2=Other(), client_factory=self.server.factory, tpm=self.fake_tpm).respond(self.req("K" * 43), dev, True, ScriptedUI(["123456"]))
+
+    def test_chip_lockout_is_reported_not_mistaken_for_a_wrong_pin(self):
+        dev = self.enroll()
+        class Locked(FakeTpm):
+            def sign(self, *a):
+                raise tpm_mod.TpmLockedOut("locked")
+        svc = core.Service(self.vault, fido2=FakeFido2(), client_factory=self.server.factory, tpm=Locked())
+        with self.assertRaises(vault.Locked):
+            svc.respond(self.req(), dev, True, ScriptedUI(["123456"]))
+
+    def test_tpm_without_a_pin_is_not_offered(self):
+        self.assertNotIn("tpm", protectors.PROTECTIONS)
+        with self.assertRaises(ValueError):
+            self.enroll("tpm")
 
 
 if __name__ == "__main__":

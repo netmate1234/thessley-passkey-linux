@@ -57,6 +57,8 @@ class Device:
     wrapped: dict                       # {"nonce": b64, "ct": b64}
     kdf: dict = field(default_factory=dict)    # PIN: {"salt": b64, "n", "r", "p"}
     fido2: dict = field(default_factory=dict)  # {"rp_id", "credential_id": b64, "salt": b64}
+    tpm: dict = field(default_factory=dict)    # {"public": b64, "private": b64} when the key lives in the TPM
+    attestation: str = ""                      # what the site was able to verify: "" (nothing) or "tpm"
     failures: int = 0
     locked_until: int = 0
 
@@ -67,6 +69,10 @@ class Device:
     @property
     def uses_fido2(self) -> bool:
         return "fido2" in self.protection
+
+    @property
+    def uses_tpm(self) -> bool:
+        return self.protection.startswith("tpm")
 
     def aad(self) -> bytes:
         return f"{self.id}|{self.origin}".encode("utf-8")

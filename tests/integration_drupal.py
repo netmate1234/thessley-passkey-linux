@@ -120,6 +120,26 @@ try:
     ok("approve with the right PIN", svc.respond(lr, cands[0], True, UI("correct-pin")) == "approved")
     ok("the starting browser is logged in as the approving account", poll(browser, s["request_id"]).get("status") == "approved" and whoami(browser) == uid["pkd_a"])
 
+    if os.environ.get("THESSLEY_TPM_TCTI"):
+        print("== key held inside a TPM (software TPM for the test)")
+        from thessley_passkey import tpm as tpm_mod
+        tpm_sess = requests.Session()
+        form_login(tpm_sess, "pkd_b", pw)
+        ttok = tpm_sess.get(BASE + "/session/token").text.strip()
+        tstart = tpm_sess.post(BASE + "/thessley/v1/passkey/enroll/start", headers={"X-CSRF-Token": ttok}, json={}).json()
+        tdev = svc.enroll(link.parse(tstart["app_link"]), "TPM PC", "tpm+pin", UI("tpm-pin-1"))
+        ok("the site accepted a TPM-signed proof of possession", bool(tdev.credential_id) and tdev.username == "pkd_b" and tdev.uses_tpm and tdev.wrapped == {}, tdev)
+        tb = requests.Session()
+        ts_ = tb.post(BASE + "/thessley/v1/passkey/login/start", json={}).json()
+        tr = link.parse(ts_["app_link"])
+        try:
+            svc.respond(tr, tdev, True, UI("wrong-pin"))
+            ok("TPM rejects a wrong PIN", False)
+        except core.WrongSecret:
+            ok("TPM rejects a wrong PIN (nothing sent to the site)", poll(tb, ts_["request_id"]).get("status") == "pending")
+        ok("approve with the TPM-held key", svc.respond(tr, tdev, True, UI("tpm-pin-1")) == "approved")
+        ok("the site logged the browser in as pkd_b", poll(tb, ts_["request_id"]).get("status") == "approved" and whoami(tb) == uid["pkd_b"])
+
     print("== deny and replay")
     b2 = requests.Session()
     s2 = b2.post(BASE + "/thessley/v1/passkey/login/start", json={}).json()

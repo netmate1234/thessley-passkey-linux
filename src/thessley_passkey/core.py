@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import socket
 import time
 
@@ -9,7 +10,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from . import protectors, protocol, vault
+from . import protectors, protocol, tpm as tpm_mod, vault
 from .interaction import Interaction
 from .link import AuthRequest, clean_text
 from .vault import Device, Locked, Vault
@@ -36,10 +37,11 @@ def _sign(key: ec.EllipticCurvePrivateKey, message: bytes) -> str:
 
 
 class Service:
-    def __init__(self, store: Vault | None = None, fido2=protectors, client_factory=protocol.Client):
+    def __init__(self, store: Vault | None = None, fido2=protectors, client_factory=protocol.Client, tpm=tpm_mod):
         self.vault = store or Vault()
         self.fido2 = fido2
         self.client_factory = client_factory
+        self.tpm = tpm
 
     # ---- lookup ---------------------------------------------------------------
 
@@ -54,7 +56,8 @@ class Service:
 
     # ---- unlocking -----------------------------------------------------------------
 
-    def _unlock(self, device: Device, interaction: Interaction) -> ec.EllipticCurvePrivateKey:
+    def _signer(self, device: Device, interaction: Interaction):
+        """Unlock the device and return a function that signs bytes -> DER signature."""
         remaining = self.vault.lock_remaining(device)
         if remaining:
             raise Locked(remaining)
@@ -63,15 +66,34 @@ class Service:
             pin_part = vault.pin_key(interaction.get_pin("Enter your PIN"), device.kdf)
         if device.uses_fido2:
             fido_part = self.fido2.fido2_secret(device.fido2, interaction)
+        kek = vault.derive_kek(pin_part, fido_part)
+
+        if device.uses_tpm:
+            # The TPM checks the password itself and counts wrong tries; our own counter sits in front
+            # of it (5 tries) so a guesser cannot use up the chip's lockout, which is shared with
+            # everything else on this computer that uses the TPM.
+            def sign_with_tpm(message: bytes) -> bytes:
+                try:
+                    out = self.tpm.sign(device.tpm, kek, message)
+                except tpm_mod.TpmWrongAuth:
+                    self.vault.record_attempt(device.id, success=False)
+                    raise WrongSecret("Wrong PIN, or not the security key this device was set up with.")
+                except tpm_mod.TpmLockedOut as exc:
+                    raise Locked(3600) from exc
+                self.vault.record_attempt(device.id, success=True)
+                return out
+            return sign_with_tpm
+
         try:
-            der = vault.unwrap(device.wrapped, vault.derive_kek(pin_part, fido_part), device.aad())
+            der = vault.unwrap(device.wrapped, kek, device.aad())
         except InvalidTag:
             if device.uses_pin:
                 self.vault.record_attempt(device.id, success=False)
             raise WrongSecret("Wrong PIN." if not device.uses_fido2 else "Wrong PIN, or not the security key this device was set up with.")
         if device.uses_pin:
             self.vault.record_attempt(device.id, success=True)
-        return serialization.load_der_private_key(der, password=None)
+        key = serialization.load_der_private_key(der, password=None)
+        return lambda message: key.sign(message, ec.ECDSA(hashes.SHA256()))
 
     # ---- enrol ---------------------------------------------------------------------
 
@@ -79,7 +101,7 @@ class Service:
         if req.type != "enroll":
             raise ValueError("This is not an enrolment request.")
         if protection not in protectors.PROTECTIONS:
-            raise ValueError("Choose PIN, security key, or both.")
+            raise ValueError("Choose how to protect the key.")
         label = clean_text(label, 100) or default_label()
 
         pin_part = fido_part = None
@@ -92,22 +114,33 @@ class Service:
         if "fido2" in protection:
             fido, fido_part = self.fido2.fido2_create(interaction)
 
-        key = ec.generate_private_key(ec.SECP256R1())
-        der = key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
         device_id = vault.new_device_id()
-        probe = Device(id=device_id, origin=req.origin, credential_id="", username="", label=label, enrolled_at=0,
-                       public_key="", protection=protection, wrapped={}, kdf=kdf, fido2=fido)
-        wrapped = vault.wrap(der, vault.derive_kek(pin_part, fido_part), probe.aad())
-
         ts = protocol.now()
-        proof = _sign(key, protocol.canonical_string("enroll", req.request_id, req.origin, req.nonce, ts, "register"))
-        public_key = _public_key_b64(key)
+        proof_msg = protocol.canonical_string("enroll", req.request_id, req.origin, req.nonce, ts, "register")
+        if protection.startswith("tpm"):
+            kek = vault.derive_kek(pin_part, fido_part)
+            tpm_blobs = self.tpm.create_key(kek)
+            public_key = protocol.b64(self.tpm.spki_from_public(base64.b64decode(tpm_blobs["public"])))
+            try:
+                proof = protocol.b64(self.tpm.sign(tpm_blobs, kek, proof_msg))
+            except tpm_mod.TpmWrongAuth as exc:  # cannot happen right after creation, but never leave a half state
+                raise tpm_mod.TpmError(str(exc))
+            wrapped = {}
+        else:
+            tpm_blobs = {}
+            key = ec.generate_private_key(ec.SECP256R1())
+            der = key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+            probe = Device(id=device_id, origin=req.origin, credential_id="", username="", label=label, enrolled_at=0,
+                           public_key="", protection=protection, wrapped={}, kdf=kdf, fido2=fido)
+            wrapped = vault.wrap(der, vault.derive_kek(pin_part, fido_part), probe.aad())
+            proof = _sign(key, proof_msg)
+            public_key = _public_key_b64(key)
         answer = self.client_factory(req.origin).enroll_respond(req.request_id, public_key, label, ts, proof)
 
         device = Device(
             id=device_id, origin=req.origin, credential_id=str(answer["credential_id"]),
             username=clean_text(answer.get("username"), 100), label=label, enrolled_at=int(time.time()),
-            public_key=public_key, protection=protection, wrapped=wrapped, kdf=kdf, fido2=fido,
+            public_key=public_key, protection=protection, wrapped=wrapped, kdf=kdf, fido2=fido, tpm=tpm_blobs,
         )
         self.vault.add(device)
         return device
@@ -119,9 +152,9 @@ class Service:
             raise ValueError("This is not a login request.")
         if device.origin != req.origin:
             raise UnknownSite(f"This computer is not enrolled with {req.origin}.")
-        key = self._unlock(device, interaction)
+        sign = self._signer(device, interaction)
         action = "approve" if approve else "deny"
         ts = protocol.now()
-        signature = _sign(key, protocol.canonical_string(req.type, req.request_id, req.origin, req.nonce, ts, action))
+        signature = protocol.b64(sign(protocol.canonical_string(req.type, req.request_id, req.origin, req.nonce, ts, action)))
         self.client_factory(req.origin).login_respond(req.request_id, device.credential_id, action, ts, signature)
         return "approved" if approve else "denied"

@@ -16,7 +16,7 @@ from .interaction import Cancelled, Interaction
 
 RP_ID = "thessley-passkey.local"   # only a label for the key; never contacted
 MIN_PIN_LENGTH = 6
-PROTECTIONS = ("pin", "fido2", "pin+fido2")
+PROTECTIONS = ("pin", "fido2", "pin+fido2", "tpm+pin", "tpm+pin+fido2")  # tpm+...: the key lives in the TPM chip
 
 
 class ProtectionError(Exception):

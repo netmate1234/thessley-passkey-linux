@@ -151,6 +151,30 @@ class ProtocolTests(unittest.TestCase):
         )
 
 
+class PrfResultTests(unittest.TestCase):
+    """The security-key library hands the secret back as an object (bytes) or, via its mapping view, as base64 text."""
+
+    SECRET = bytes(range(32))
+
+    def test_object_form(self):
+        from types import SimpleNamespace as NS
+        r = {"prf": NS(enabled=None, results=NS(first=self.SECRET, second=None))}
+        self.assertEqual(protectors.prf_secret(r), self.SECRET)
+
+    def test_real_library_objects(self):
+        from fido2.ctap2.extensions import AuthenticatorExtensionsPRFOutputs, AuthenticatorExtensionsPRFValues
+        out = AuthenticatorExtensionsPRFOutputs(enabled=None, results=AuthenticatorExtensionsPRFValues(self.SECRET, None))
+        self.assertEqual(protectors.prf_secret({"prf": out}), self.SECRET)
+
+    def test_json_text_form(self):
+        text = base64.urlsafe_b64encode(self.SECRET).decode().rstrip("=")
+        self.assertEqual(protectors.prf_secret({"prf": {"results": {"first": text}}}), self.SECRET)
+
+    def test_missing(self):
+        self.assertIsNone(protectors.prf_secret({}))
+        self.assertIsNone(protectors.prf_secret({"prf": {"results": None}}))
+
+
 class VaultTests(unittest.TestCase):
     def test_wrap_roundtrip_and_wrong_key(self):
         kek = vault.derive_kek(b"p" * 32, None)

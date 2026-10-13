@@ -35,12 +35,42 @@ def check_pin_strength(pin: str) -> None:
 
 
 def _dig(obj, *keys):
-    """Read nested values whether the library hands back dicts or objects."""
+    """Read nested values from either plain dicts or the library's result objects.
+
+    The library's result objects also behave like mappings, but then hand back the JSON form
+    (binary values as base64 text), so attributes are preferred and only plain dicts use .get().
+    """
     for key in keys:
         if obj is None:
             return None
-        obj = obj.get(key) if hasattr(obj, "get") else getattr(obj, key, None)
+        if isinstance(obj, dict):
+            obj = obj.get(key)
+        elif hasattr(obj, key):
+            obj = getattr(obj, key)
+        elif hasattr(obj, "get"):
+            obj = obj.get(key)
+        else:
+            return None
     return obj
+
+
+def _as_bytes(value) -> bytes | None:
+    """The key's secret as raw bytes, whichever form the library gave it in."""
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    if isinstance(value, str):  # websafe base64 (JSON form)
+        try:
+            return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        except ValueError:
+            return None
+    return None
+
+
+def prf_secret(extension_results) -> bytes | None:
+    """Pull the PRF output out of a get_assertion response's client extension results."""
+    return _as_bytes(_dig(extension_results, "prf", "results", "first"))
 
 
 def _client(interaction: Interaction):
@@ -125,7 +155,7 @@ def fido2_secret(params: dict, interaction: Interaction) -> bytes:
             "extensions": {"prf": {"eval": {"first": base64.b64decode(params["salt"])}}},
         })
         response = client.get_assertion(options).get_response(0)
-        return _dig(response.client_extension_results, "prf", "results", "first")
+        return prf_secret(response.client_extension_results)
 
     interaction.notify("Touch your security key now.")
     secret = _run(interaction, get)

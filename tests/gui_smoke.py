@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 os.environ["THESSLEY_PASSKEY_DEV"] = "1"
 os.environ.setdefault("GSK_RENDERER", "cairo")
+os.environ["THESSLEY_APP_ID"] = "se.thessley.PasskeyTest" + str(os.getpid())  # private identity: never talk to a real running copy
 os.environ.setdefault("GDK_BACKEND", "x11")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 

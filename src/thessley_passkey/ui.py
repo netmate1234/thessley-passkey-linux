@@ -6,6 +6,7 @@ interpreted as markup (rows set use_markup off, labels are plain text).
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 
@@ -399,7 +400,8 @@ class Window(Adw.ApplicationWindow):
 
 class Application(Adw.Application):
     def __init__(self, service: Service):
-        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
+        # Tests set THESSLEY_APP_ID so they never hand their links to the copy running on someone's desktop.
+        super().__init__(application_id=os.environ.get("THESSLEY_APP_ID", APP_ID), flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
         self.service = service
 
     def do_command_line(self, cmdline):

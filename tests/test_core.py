@@ -202,6 +202,39 @@ class LinkTests(unittest.TestCase):
             del os.environ["THESSLEY_PASSKEY_DEV"]
 
 
+class ElevatedRelaunchTests(unittest.TestCase):
+    """The link passed to an administrator copy of the app is rebuilt from validated fields only."""
+
+    def test_the_relaunch_link_parses_back_to_the_same_request(self):
+        req = link.parse(mklink(ip="1.2.3.4", country="Belgium", username="alice"))
+        again = link.parse(req.raw)
+        self.assertEqual(again, req)
+        self.assertEqual(again.raw, req.raw)
+
+    def test_nothing_unchecked_travels_to_the_elevated_process(self):
+        hostile = mklink(username='bob" --register-handler "x', ip="1.2.3.4") + '&extra=" -c "import os" "&x=%22%0d%0a'
+        req = link.parse(hostile)
+        self.assertIsNotNone(req)
+        self.assertNotIn('"', req.raw)
+        self.assertNotIn("extra", req.raw)
+        self.assertNotIn(" ", req.raw)
+        self.assertNotIn("\n", req.raw)
+        self.assertTrue(req.raw.startswith("thessleypasskey://auth?"))
+        self.assertEqual(link.parse(req.raw), req)
+
+    def test_relaunch_refuses_a_link_that_was_not_rebuilt(self):
+        from thessley_passkey import elevate
+        for bad in ('thessleypasskey://auth?a=1" -c "x', "https://evil.example/", "thessleypasskey://auth?a=1\n"):
+            self.assertFalse(elevate.relaunch(bad), bad)
+
+    def test_the_command_line_quotes_the_link_as_one_argument(self):
+        from thessley_passkey import elevate
+        req = link.parse(mklink(username="alice"))
+        program, args = elevate._command(req.raw)
+        self.assertTrue(args.endswith(f' "{req.raw}"'))
+        self.assertEqual(args.count('"'), 4)  # the code and the link, each in one pair of quotes
+
+
 class ProtocolTests(unittest.TestCase):
     def test_canonical_string(self):
         self.assertEqual(

@@ -34,6 +34,8 @@ def _command(link: str) -> tuple[str, str]:
 def relaunch(link: str) -> bool:
     """Reopen the app as administrator on `link`. False if the user declined the prompt."""
     import ctypes
+    if '"' in link or any(c in link for c in "\r\n\0") or not link.startswith("thessleypasskey://auth?"):
+        return False  # never hand anything but a rebuilt, validated link to an administrator process
     program, args = _command(link)
     # ShellExecuteW returns a value above 32 when the new process started.
     return ctypes.windll.shell32.ShellExecuteW(None, "runas", program, args, os.getcwd(), 1) > 32

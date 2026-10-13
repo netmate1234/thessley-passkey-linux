@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 TYPES = ("login", "2fa", "enroll")
 _TOKEN = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
@@ -88,13 +88,9 @@ def parse(raw: str) -> AuthRequest | None:
     # port): anything else is not something a Thessley server produces.
     if canonical is None or canonical.lower() != origin.lower():
         return None
-    return AuthRequest(
-        type=rtype,
-        request_id=rid,
-        nonce=nonce,
-        origin=origin,
-        ip=clean_text(q.get("ip"), 45),
-        country=clean_text(q.get("country"), 60),
-        username=clean_text(q.get("username"), 100),
-        raw=raw.strip(),
-    )
+    ip, country, username = clean_text(q.get("ip"), 45), clean_text(q.get("country"), 60), clean_text(q.get("username"), 100)
+    # The link as it is handed to a re-launched (possibly elevated) copy of the app: rebuilt from the validated
+    # fields only, so nothing unchecked in the original text (quotes, extra parameters) can travel with it.
+    fields = {"type": rtype, "id": rid, "nonce": nonce, "origin": origin, "ip": ip, "country": country, "username": username}
+    raw = "thessleypasskey://auth?" + urlencode({k: v for k, v in fields.items() if v})
+    return AuthRequest(type=rtype, request_id=rid, nonce=nonce, origin=origin, ip=ip, country=country, username=username, raw=raw)

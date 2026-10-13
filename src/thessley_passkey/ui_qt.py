@@ -6,6 +6,7 @@ interpreted as rich text: labels are plain text.
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 
@@ -22,15 +23,46 @@ from .uicommon import (
 STYLE = """
 QLabel[role="title"] { font-size: 24px; font-weight: 600; }
 QLabel[role="dim"] { }
-QLabel[role="error"] { color: #c01c28; }
+QLabel[role="error"] { color: @ERROR@; }
 QLabel[role="notice"] { font-size: 15px; font-weight: 600; }
 QLabel[role="caption"] { font-size: 12px; }
 QFrame[card="true"] { border: 1px solid palette(midlight); border-radius: 10px; background: palette(base); }
 QPushButton { padding: 10px 18px; border-radius: 8px; font-size: 14px; border: 1px solid palette(mid); background: palette(button); }
 QPushButton[kind="primary"] { background: #3584e4; color: white; border: none; font-weight: 600; }
-QPushButton[kind="primary"]:disabled { background: #9db8dd; }
-QPushButton[kind="danger"] { color: #c01c28; border: 1px solid #c01c28; }
+QPushButton[kind="primary"]:disabled { background: @PRIMARY_OFF@; }
+QPushButton[kind="danger"] { color: @ERROR@; border: 1px solid @ERROR@; }
 """
+
+
+def dark_palette() -> QtGui.QPalette:
+    """A neutral dark palette (Fusion draws everything else from it)."""
+    c = QtGui.QColor
+    pal = QtGui.QPalette()
+    for role, colour in (
+        (QtGui.QPalette.Window, "#242424"), (QtGui.QPalette.WindowText, "#eeeeee"),
+        (QtGui.QPalette.Base, "#1c1c1c"), (QtGui.QPalette.AlternateBase, "#2a2a2a"),
+        (QtGui.QPalette.Text, "#eeeeee"), (QtGui.QPalette.Button, "#383838"),
+        (QtGui.QPalette.ButtonText, "#eeeeee"), (QtGui.QPalette.ToolTipBase, "#383838"),
+        (QtGui.QPalette.ToolTipText, "#eeeeee"), (QtGui.QPalette.PlaceholderText, "#8a8a8a"),
+        (QtGui.QPalette.Highlight, "#3584e4"), (QtGui.QPalette.HighlightedText, "#ffffff"),
+        (QtGui.QPalette.Link, "#78aeed"), (QtGui.QPalette.Mid, "#555555"), (QtGui.QPalette.Midlight, "#454545"),
+        (QtGui.QPalette.Light, "#4a4a4a"), (QtGui.QPalette.Dark, "#1a1a1a"), (QtGui.QPalette.Shadow, "#000000"),
+    ):
+        pal.setColor(role, c(colour))
+    for role in (QtGui.QPalette.WindowText, QtGui.QPalette.Text, QtGui.QPalette.ButtonText):
+        pal.setColor(QtGui.QPalette.Disabled, role, c("#777777"))
+    return pal
+
+
+def apply_theme(app: QtWidgets.QApplication) -> None:
+    """Dark by default. THESSLEY_THEME=light keeps Fusion's light look, =system follows Windows' own setting."""
+    mode = os.environ.get("THESSLEY_THEME", "dark").lower()
+    dark = mode == "dark" or (mode == "system" and app.styleHints().colorScheme() == Qt.ColorScheme.Dark)
+    app.setStyle("Fusion")
+    if dark:
+        app.setPalette(dark_palette())
+    app.setStyleSheet(STYLE.replace("@ERROR@", "#ff7b72" if dark else "#c01c28")
+                      .replace("@PRIMARY_OFF@", "#2c4a73" if dark else "#9db8dd"))
 
 
 def _dim(label: QtWidgets.QLabel) -> None:
@@ -451,8 +483,7 @@ def run(service: Service | None = None, argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     app = QtWidgets.QApplication(argv)
     app.setApplicationName("Thessley Passkey")
-    app.setStyle("Fusion")
-    app.setStyleSheet(STYLE)
+    apply_theme(app)
     raw = next((a for a in argv[1:] if a.startswith("thessleypasskey:")), None)
     request = link.parse(raw) if raw else None
     toast = "That link is not a valid Thessley Passkey link." if raw and request is None else ""

@@ -334,12 +334,25 @@ class Window(QtWidgets.QMainWindow):
                 protection = combo.currentData()
                 label = name.text()
                 if elevate.needed_for(protection):
-                    # Windows only lets administrators prove a key is in the TPM: ask permission, reopen on this link.
+                    # Windows only lets administrators prove a key is in the TPM: explain, ask permission, reopen on this link.
+                    box = QtWidgets.QMessageBox(self)
+                    box.setIcon(QtWidgets.QMessageBox.Information)
+                    box.setWindowTitle("Administrator permission needed")
+                    box.setText("Windows needs your permission to prove that this key is stored in your computer's TPM chip.")
+                    box.setInformativeText("Windows will ask you next: choose Yes. This app then reopens on this same page, "
+                                           "and you press “Add this computer” again. Only this proof uses the permission; "
+                                           "nothing else on your computer is changed.\n\n"
+                                           "If you would rather not, choose a protection without the TPM.")
+                    box.setStandardButtons(QtWidgets.QMessageBox.Cancel | QtWidgets.QMessageBox.Ok)
+                    box.button(QtWidgets.QMessageBox.Ok).setText("Continue")
+                    box.setDefaultButton(QtWidgets.QMessageBox.Ok)
+                    if box.exec() != QtWidgets.QMessageBox.Ok:
+                        return
                     if req.raw and elevate.relaunch(req.raw):
                         self.close()
                     else:
-                        self.error.setText("To prove the key is in the TPM, Windows needs your permission "
-                                           "(administrator). Press the button again and choose Yes, or pick a protection without the TPM.")
+                        self.error.setText("Permission was not given, so the TPM proof can't be made. "
+                                           "Press “Add this computer” to try again and choose Yes, or pick a protection without the TPM.")
                         self.error.show()
                     return
                 self._busy([add, cancel, name, combo])

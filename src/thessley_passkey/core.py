@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from . import protectors, protocol, tpm as tpm_mod, vault
 from .interaction import Interaction
 from .link import AuthRequest, clean_text
+from .protocol import NetworkError, ServerError
 from .vault import Device, Locked, Vault
 
 
@@ -38,6 +39,7 @@ def _sign(key: ec.EllipticCurvePrivateKey, message: bytes) -> str:
 
 class Service:
     def __init__(self, store: Vault | None = None, fido2=protectors, client_factory=protocol.Client, tpm=tpm_mod):
+        self.last_note = ""
         self.vault = store or Vault()
         self.fido2 = fido2
         self.client_factory = client_factory
@@ -97,6 +99,27 @@ class Service:
 
     # ---- enrol ---------------------------------------------------------------------
 
+    def _attest_tpm(self, client, req: AuthRequest, tpm_blobs: dict, kek: bytes) -> dict | None:
+        """Prove to the site that the key lives in a genuine TPM. Never blocks enrolment: on any
+        failure the device is enrolled without the proof and the reason is kept in last_note."""
+        try:
+            with self.tpm.Attestor() as at:
+                certs = at.ek_certs()
+                challenge = client.tpm_challenge(req.request_id, certs, at.ak_public())
+                secret = at.activate(base64.b64decode(challenge["credential_blob"]), base64.b64decode(challenge["secret"]))
+                parts = at.certify(tpm_blobs, kek, req.nonce.encode("ascii"))
+            return {
+                "ak_public": protocol.b64(at.ak_public_area.marshal()),
+                "activated_secret": protocol.b64(secret),
+                "certify_info": protocol.b64(parts["attest"]),
+                "certify_signature": protocol.b64(parts["signature"]),
+                "key_public": protocol.b64(parts["key_public"]),
+            }
+        except (tpm_mod.TpmError, ServerError, NetworkError, ValueError, OSError, KeyError) as exc:
+            self.last_note = f"Enrolled without hardware proof: {protocol.friendly(exc) if isinstance(exc, ServerError) else exc}"
+            return None
+
+
     def enroll(self, req: AuthRequest, label: str, protection: str, interaction: Interaction) -> Device:
         if req.type != "enroll":
             raise ValueError("This is not an enrolment request.")
@@ -115,18 +138,21 @@ class Service:
             fido, fido_part = self.fido2.fido2_create(interaction)
 
         device_id = vault.new_device_id()
-        ts = protocol.now()
-        proof_msg = protocol.canonical_string("enroll", req.request_id, req.origin, req.nonce, ts, "register")
+        client = self.client_factory(req.origin)
+        self.last_note = ""
+        attestation = None
         if protection.startswith("tpm"):
             kek = vault.derive_kek(pin_part, fido_part)
             tpm_blobs = self.tpm.create_key(kek)
             public_key = protocol.b64(self.tpm.spki_from_public(base64.b64decode(tpm_blobs["public"])))
-            try:
-                proof = protocol.b64(self.tpm.sign(tpm_blobs, kek, proof_msg))
-            except tpm_mod.TpmWrongAuth as exc:  # cannot happen right after creation, but never leave a half state
-                raise tpm_mod.TpmError(str(exc))
+            attestation = self._attest_tpm(client, req, tpm_blobs, kek)
+            ts = protocol.now()  # after the (slow) TPM work: the site only accepts a fresh timestamp
+            proof_msg = protocol.canonical_string("enroll", req.request_id, req.origin, req.nonce, ts, "register")
+            proof = protocol.b64(self.tpm.sign(tpm_blobs, kek, proof_msg))
             wrapped = {}
         else:
+            ts = protocol.now()
+            proof_msg = protocol.canonical_string("enroll", req.request_id, req.origin, req.nonce, ts, "register")
             tpm_blobs = {}
             key = ec.generate_private_key(ec.SECP256R1())
             der = key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
@@ -135,12 +161,15 @@ class Service:
             wrapped = vault.wrap(der, vault.derive_kek(pin_part, fido_part), probe.aad())
             proof = _sign(key, proof_msg)
             public_key = _public_key_b64(key)
-        answer = self.client_factory(req.origin).enroll_respond(req.request_id, public_key, label, ts, proof)
+        answer = client.enroll_respond(req.request_id, public_key, label, ts, proof, attestation)
+        if protection.startswith("tpm") and not answer.get("attestation") and not self.last_note:
+            self.last_note = "The site accepted this computer but could not verify the TPM."
 
         device = Device(
             id=device_id, origin=req.origin, credential_id=str(answer["credential_id"]),
             username=clean_text(answer.get("username"), 100), label=label, enrolled_at=int(time.time()),
             public_key=public_key, protection=protection, wrapped=wrapped, kdf=kdf, fido2=fido, tpm=tpm_blobs,
+            attestation=str(answer.get("attestation") or ""),
         )
         self.vault.add(device)
         return device

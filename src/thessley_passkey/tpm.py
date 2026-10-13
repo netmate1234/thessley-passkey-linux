@@ -57,6 +57,22 @@ def _lib():
     return ESAPI, constants, types, tpm_utils, TSS2_Exception
 
 
+def status() -> tuple[bool, str]:
+    """(usable, explanation) for the settings screen: is there a TPM this user can use?"""
+    try:
+        _lib()
+    except TpmUnavailable as exc:
+        return False, str(exc)
+    if os.environ.get("THESSLEY_TPM_TCTI"):
+        return True, ""
+    device = DEFAULT_TCTI.split(":", 1)[1]
+    if not os.path.exists(device):
+        return False, "This computer has no TPM 2.0 chip (or it is turned off in the firmware)."
+    if not os.access(device, os.R_OK | os.W_OK):
+        return False, "A TPM was found, but your user may not use it. Add your user to the 'tss' group (sudo usermod -aG tss $USER) and log in again."
+    return True, ""
+
+
 def _b64(b: bytes) -> str:
     return base64.b64encode(b).decode("ascii")
 

@@ -36,12 +36,15 @@ class FakeServer:
         self.keys = {}      # credential_id -> public key
         self.used = set()
         self.calls = []
+        self.tpm_payloads, self.challenges = [], []
+        self.accept_tpm, self.refuse_tpm = True, False
 
     def factory(self, origin):
         server = self
 
         class C:
-            def enroll_respond(self, request_id, public_key_b64, label, ts, proof_b64):
+            def enroll_respond(self, request_id, public_key_b64, label, ts, proof_b64, tpm=None):
+                server.tpm_payloads.append(tpm)
                 key = serialization.load_der_public_key(base64.b64decode(public_key_b64))
                 msg = protocol.canonical_string("enroll", request_id, origin, NONCE, ts, "register")
                 try:
@@ -50,7 +53,13 @@ class FakeServer:
                     raise ServerError("Proof of possession failed.", "thessley_bad_signature", 401)
                 cred = "cred%d" % (len(server.keys) + 1)
                 server.keys[cred] = key
-                return {"result": "ok", "credential_id": cred, "username": "alice"}
+                return {"result": "ok", "credential_id": cred, "username": "alice", "attestation": "tpm" if tpm and server.accept_tpm else ""}
+
+            def tpm_challenge(self, request_id, ek_certs, ak_public):
+                if server.refuse_tpm:
+                    raise ServerError("The TPM could not be verified: the TPM certificate chain is not one we trust.", "thessley_tpm_unverified", 400)
+                server.challenges.append((request_id, len(ek_certs)))
+                return {"credential_blob": base64.b64encode(b"blob").decode(), "secret": base64.b64encode(b"secret").decode()}
 
             def login_respond(self, request_id, credential_id, action, ts, sig_b64):
                 if request_id in server.used:
@@ -96,6 +105,33 @@ class FakeTpm:
 
     def __init__(self):
         self.keys, self.wrong_tries = {}, 0
+
+    class Attestor:
+        """Stands in for the chip's attestation steps."""
+        broken = False
+        ak_public_area = type("A", (), {"marshal": lambda self: b"ak-public"})()
+
+        def __enter__(self):
+            if FakeTpm.Attestor.broken:
+                raise tpm_mod.TpmUnavailable("No TPM here.")
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def ek_certs(self):
+            return [b"leaf", b"intermediate"]
+
+        def ak_public(self):
+            return b"ak-public"
+
+        def activate(self, blob, secret):
+            assert (blob, secret) == (b"blob", b"secret")
+            return b"activated"
+
+        def certify(self, blobs, auth, nonce):
+            assert nonce == NONCE.encode()
+            return {"attest": b"attest", "signature": b"sig", "key_public": b"pub"}
 
     def create_key(self, auth):
         key = ec.generate_private_key(ec.SECP256R1())
@@ -405,6 +441,43 @@ class TpmProtectionTests(unittest.TestCase):
         svc = core.Service(self.vault, fido2=FakeFido2(), client_factory=self.server.factory, tpm=Locked())
         with self.assertRaises(vault.Locked):
             svc.respond(self.req(), dev, True, ScriptedUI(["123456"]))
+
+
+    def test_attested_enrolment_sends_the_proof_and_records_it(self):
+        dev = self.enroll()
+        payload = self.server.tpm_payloads[-1]
+        self.assertEqual(dev.attestation, "tpm")
+        self.assertEqual(set(payload), {"ak_public", "activated_secret", "certify_info", "certify_signature", "key_public"})
+        self.assertEqual(base64.b64decode(payload["activated_secret"]), b"activated")
+        self.assertEqual(self.server.challenges[-1], (RID, 2))
+
+    def test_no_usable_tpm_still_enrols_without_proof(self):
+        FakeTpm.Attestor.broken = True
+        try:
+            dev = self.enroll()
+        finally:
+            FakeTpm.Attestor.broken = False
+        self.assertEqual(dev.attestation, "")
+        self.assertIsNone(self.server.tpm_payloads[-1])
+        self.assertIn("without hardware proof", self.svc.last_note)
+
+    def test_site_that_refuses_the_chain_still_enrols_without_proof(self):
+        self.server.refuse_tpm = True
+        dev = self.enroll()
+        self.assertEqual(dev.attestation, "")
+        self.assertIn("not one we trust", self.svc.last_note)
+        self.assertEqual(self.svc.respond(self.req(), dev, True, ScriptedUI(["123456"])), "approved")
+
+    def test_site_that_does_not_verify_leaves_the_device_unverified(self):
+        self.server.accept_tpm = False
+        dev = self.enroll()
+        self.assertEqual(dev.attestation, "")
+        self.assertIn("could not verify the TPM", self.svc.last_note)
+
+    def test_software_devices_send_no_tpm_payload(self):
+        svc = core.Service(self.vault, fido2=FakeFido2(), client_factory=self.server.factory, tpm=self.fake_tpm)
+        svc.enroll(link.parse(mklink(type="enroll")), "PC", "pin", ScriptedUI(["123456"]))
+        self.assertIsNone(self.server.tpm_payloads[-1])
 
     def test_tpm_without_a_pin_is_not_offered(self):
         self.assertNotIn("tpm", protectors.PROTECTIONS)

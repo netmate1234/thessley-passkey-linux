@@ -43,9 +43,12 @@ def ok(name, cond, extra=""):
     bad += 0 if cond else 1
 
 
+SSH_OPTS = shlex.split(os.environ.get("SSH_OPTS", ""))  # e.g. "-i /home/me/.ssh/id_ed25519" when run under sudo
+
+
 def drush(args):
     cmd = f"cd {DIR} && vendor/bin/drush {args}"
-    return subprocess.run(["ssh", SSH, cmd], capture_output=True, text=True).stdout.strip()
+    return subprocess.run(["ssh", *SSH_OPTS, SSH, cmd], capture_output=True, text=True).stdout.strip()
 
 
 def setcfg(mode):
@@ -120,25 +123,52 @@ try:
     ok("approve with the right PIN", svc.respond(lr, cands[0], True, UI("correct-pin")) == "approved")
     ok("the starting browser is logged in as the approving account", poll(browser, s["request_id"]).get("status") == "approved" and whoami(browser) == uid["pkd_a"])
 
-    if os.environ.get("THESSLEY_TPM_TCTI"):
-        print("== key held inside a TPM (software TPM for the test)")
+    if os.environ.get("THESSLEY_TPM_TCTI") or os.environ.get("REAL_TPM"):
+        import types as _types
         from thessley_passkey import tpm as tpm_mod
+        emulated = bool(os.environ.get("THESSLEY_TPM_TCTI"))
+        print("== key held inside a TPM (" + ("software TPM, test manufacturer root" if emulated else "THIS COMPUTER'S REAL TPM, Intel root") + ")")
+        tpm_backend = tpm_mod
+        if emulated:
+            # The sandbox site only trusts Intel's root; give it a throwaway test root for the emulated chip.
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import tpm_interop as T
+            from cryptography.hazmat.primitives import serialization
+            ca_key, ca = T.make_ca("Test TPM Root")
+            root_pem = ca.public_bytes(serialization.Encoding.PEM).decode()
+            subprocess.run(["ssh", *SSH_OPTS, SSH, f"cat > {DIR}/web/modules/custom/thessley_passkey/tpm-roots/zz-test-root.pem"], input=root_pem, text=True)
+
+            class TestAttestor(tpm_mod.Attestor):
+                def ek_certs(self):
+                    x, y = self.ek_point()
+                    return [T.ek_cert(ca_key, ca, x, y).public_bytes(serialization.Encoding.DER)]
+
+            tpm_backend = _types.SimpleNamespace(create_key=tpm_mod.create_key, spki_from_public=tpm_mod.spki_from_public, sign=tpm_mod.sign, Attestor=TestAttestor)
+        tsvc = core.Service(store, tpm=tpm_backend)
         tpm_sess = requests.Session()
         form_login(tpm_sess, "pkd_b", pw)
         ttok = tpm_sess.get(BASE + "/session/token").text.strip()
         tstart = tpm_sess.post(BASE + "/thessley/v1/passkey/enroll/start", headers={"X-CSRF-Token": ttok}, json={}).json()
-        tdev = svc.enroll(link.parse(tstart["app_link"]), "TPM PC", "tpm+pin", UI("tpm-pin-1"))
+        tdev = tsvc.enroll(link.parse(tstart["app_link"]), "TPM PC", "tpm+pin", UI("tpm-pin-1"))
         ok("the site accepted a TPM-signed proof of possession", bool(tdev.credential_id) and tdev.username == "pkd_b" and tdev.uses_tpm and tdev.wrapped == {}, tdev)
+        ok("the site VERIFIED the TPM (device marked as TPM hardware)", tdev.attestation == "tpm", tsvc.last_note or tdev.attestation)
+        level = drush("php:eval " + shlex.quote('echo \\Drupal::database()->query("SELECT attestation_level FROM {thessley_passkeys} WHERE credential_id=:c", [":c"=>"%s"])->fetchField();' % tdev.credential_id))
+        ok("the site stored attestation level 'tpm'", level == "tpm", level)
+        listing = tpm_sess.get(BASE + "/thessley/v1/passkey/devices").json()["devices"]
+        ok("the device list reports the security level to the browser", any(d["security"] == "tpm" for d in listing), listing)
         tb = requests.Session()
         ts_ = tb.post(BASE + "/thessley/v1/passkey/login/start", json={}).json()
         tr = link.parse(ts_["app_link"])
-        try:
-            svc.respond(tr, tdev, True, UI("wrong-pin"))
-            ok("TPM rejects a wrong PIN", False)
-        except core.WrongSecret:
-            ok("TPM rejects a wrong PIN (nothing sent to the site)", poll(tb, ts_["request_id"]).get("status") == "pending")
-        ok("approve with the TPM-held key", svc.respond(tr, tdev, True, UI("tpm-pin-1")) == "approved")
+        if emulated:  # never burn a real chip's lockout counter with a deliberate wrong PIN
+            try:
+                tsvc.respond(tr, tdev, True, UI("wrong-pin"))
+                ok("TPM rejects a wrong PIN", False)
+            except core.WrongSecret:
+                ok("TPM rejects a wrong PIN (nothing sent to the site)", poll(tb, ts_["request_id"]).get("status") == "pending")
+        ok("approve with the TPM-held key", tsvc.respond(tr, tdev, True, UI("tpm-pin-1")) == "approved")
         ok("the site logged the browser in as pkd_b", poll(tb, ts_["request_id"]).get("status") == "approved" and whoami(tb) == uid["pkd_b"])
+        if emulated:
+            subprocess.run(["ssh", *SSH_OPTS, SSH, f"rm -f {DIR}/web/modules/custom/thessley_passkey/tpm-roots/zz-test-root.pem"])
 
     print("== deny and replay")
     b2 = requests.Session()

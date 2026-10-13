@@ -76,11 +76,21 @@ class Client:
         if data.get("result") != "ok":
             raise ServerError(str(data.get("message") or "The server rejected this response."), str(data.get("code") or ""), int((data.get("data") or {}).get("status", 0) or 0))
 
-    def enroll_respond(self, request_id: str, public_key_b64: str, label: str, timestamp: int, proof_b64: str) -> dict:
-        data = self._post(f"/enroll/{request_id}/respond", {
+    def tpm_challenge(self, request_id: str, ek_certs: list[bytes], ak_public: bytes) -> dict:
+        """Ask the site to check the TPM's certificate chain and hand back an activation challenge."""
+        data = self._post(f"/enroll/{request_id}/tpm-challenge", {"ek_certs": [b64(c) for c in ek_certs], "ak_public": b64(ak_public)})
+        if not data.get("credential_blob") or not data.get("secret"):
+            raise ServerError(str(data.get("message") or "The site does not support TPM verification."), str(data.get("code") or ""), int((data.get("data") or {}).get("status", 0) or 0))
+        return data
+
+    def enroll_respond(self, request_id: str, public_key_b64: str, label: str, timestamp: int, proof_b64: str, tpm: dict | None = None) -> dict:
+        body = {
             "public_key": public_key_b64, "algorithm": "ES256", "label": label,
             "timestamp": timestamp, "proof_signature": proof_b64, "attestation_chain": [],
-        })
+        }
+        if tpm:
+            body["tpm"] = tpm
+        data = self._post(f"/enroll/{request_id}/respond", body)
         if data.get("result") != "ok" or not data.get("credential_id"):
             raise ServerError(str(data.get("message") or "Enrollment was rejected by the server."), str(data.get("code") or ""), int((data.get("data") or {}).get("status", 0) or 0))
         return data

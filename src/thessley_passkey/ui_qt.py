@@ -12,7 +12,7 @@ import threading
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Qt
 
-from . import __version__, elevate, link, vault
+from . import __version__, elevate, link, protectors, vault
 from .core import Service, default_label
 from .interaction import Cancelled, Interaction
 from .uicommon import (
@@ -445,4 +445,8 @@ def run(service: Service | None = None, argv: list[str] | None = None) -> int:
     toast = "That link is not a valid Thessley Passkey link." if raw and request is None else ""
     window = Window(service or Service(), request, bool(raw), toast)
     window.show()
+    if sys.platform == "win32":
+        protectors.set_parent_window(int(window.winId()))  # the security-key dialog is owned by this window
+        window.raise_()
+        window.activateWindow()
     return app.exec()

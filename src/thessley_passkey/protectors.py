@@ -73,6 +73,14 @@ def prf_secret(extension_results) -> bytes | None:
     return _as_bytes(_dig(extension_results, "prf", "results", "first"))
 
 
+parent_window: int | None = None  # Windows: the app window's handle (HWND) that owns the security-key dialog
+
+
+def set_parent_window(handle: int | None) -> None:
+    global parent_window
+    parent_window = handle
+
+
 def _client(interaction: Interaction):
     try:
         from fido2.client import ClientError, DefaultClientDataCollector, Fido2Client, UserInteraction
@@ -85,7 +93,9 @@ def _client(interaction: Interaction):
         from fido2.client.windows import WindowsClient
         if not WindowsClient.is_available():
             raise ProtectionError("Windows' security-key support (WebAuthn) is not available on this computer.")
-        return WindowsClient(DefaultClientDataCollector("https://" + RP_ID), allow_hmac_secret=True), ClientError
+        # The dialog must be owned by our window, or Windows may open it behind it (the default is whatever window
+        # happens to be in the foreground when the request starts).
+        return WindowsClient(DefaultClientDataCollector("https://" + RP_ID), handle=parent_window, allow_hmac_secret=True), ClientError
 
     from fido2.hid import CtapHidDevice
 

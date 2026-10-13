@@ -10,7 +10,9 @@ Phase 2 - proof for the site. A fresh restricted "attestation key" (AK) is creat
   chip's EK certificate chain (Intel, Infineon, ...) is sent along so the site can check the whole
   chain back to the manufacturer.
 
-Every function opens its own connection and releases every object it loaded.
+All TPM traffic goes through tpm2.py (pure Python), so Windows (TPM Base Services) and Linux
+(/dev/tpmrm0) run exactly the same code. Every function opens its own connection and releases
+every object it loaded.
 """
 
 from __future__ import annotations
@@ -21,10 +23,12 @@ import hashlib
 import os
 from typing import Iterator
 
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils as asym_utils
 
-DEFAULT_TCTI = "device:/dev/tpmrm0"
+from . import tpm2
+
+DEFAULT_CONNECTION = "tbs" if os.name == "nt" else "device:/dev/tpmrm0"
 
 
 class TpmError(Exception):
@@ -32,7 +36,7 @@ class TpmError(Exception):
 
 
 class TpmUnavailable(TpmError):
-    """No usable TPM (missing device, no permission, library not installed)."""
+    """No usable TPM (missing device, no permission)."""
 
 
 class TpmWrongAuth(TpmError):
@@ -44,32 +48,26 @@ class TpmLockedOut(TpmError):
 
 
 def tcti() -> str:
-    return os.environ.get("THESSLEY_TPM_TCTI") or DEFAULT_TCTI
-
-
-def _lib():
-    try:
-        from tpm2_pytss import ESAPI, constants, types
-        from tpm2_pytss import utils as tpm_utils
-        from tpm2_pytss.TSS2_Exception import TSS2_Exception
-    except ImportError as exc:
-        raise TpmUnavailable("The python3-tpm2-pytss package is needed for TPM protection.") from exc
-    return ESAPI, constants, types, tpm_utils, TSS2_Exception
+    """How to reach the TPM (THESSLEY_TPM_TCTI overrides: 'swtpm:host=H,port=P', 'device:/dev/tpm0', 'tbs')."""
+    return os.environ.get("THESSLEY_TPM_TCTI") or DEFAULT_CONNECTION
 
 
 def status() -> tuple[bool, str]:
     """(usable, explanation) for the settings screen: is there a TPM this user can use?"""
-    try:
-        _lib()
-    except TpmUnavailable as exc:
-        return False, str(exc)
-    if os.environ.get("THESSLEY_TPM_TCTI"):
+    spec = tcti()
+    if spec.startswith("device:"):
+        device = spec.split(":", 1)[1]
+        if not os.path.exists(device):
+            return False, "This computer has no TPM 2.0 chip (or it is turned off in the firmware)."
+        if not os.access(device, os.R_OK | os.W_OK):
+            return False, "A TPM was found, but your user may not use it. Add your user to the 'tss' group (sudo usermod -aG tss $USER) and log in again."
         return True, ""
-    device = DEFAULT_TCTI.split(":", 1)[1]
-    if not os.path.exists(device):
-        return False, "This computer has no TPM 2.0 chip (or it is turned off in the firmware)."
-    if not os.access(device, os.R_OK | os.W_OK):
-        return False, "A TPM was found, but your user may not use it. Add your user to the 'tss' group (sudo usermod -aG tss $USER) and log in again."
+    if spec == "tbs":
+        try:
+            tpm2.open_transport("tbs").close()
+        except tpm2.TransportError as exc:
+            return False, f"No usable TPM: {exc}"
+        return True, ""
     return True, ""
 
 
@@ -81,95 +79,100 @@ def _unb64(s: str) -> bytes:
     return base64.b64decode(s.encode("ascii"))
 
 
-@contextlib.contextmanager
-def _session(connection: str | None = None) -> Iterator:
-    ESAPI, constants, types, tpm_utils, TSS2 = _lib()
-    try:
-        esys = ESAPI(tcti=connection or tcti())
-    except Exception as exc:
+def _map_error(exc: Exception) -> TpmError:
+    if isinstance(exc, tpm2.TpmRcError):
+        if exc.is_lockout:
+            return TpmLockedOut("The TPM has locked out password attempts for a while (too many wrong PINs).")
+        if exc.is_wrong_auth:
+            return TpmWrongAuth("Wrong PIN.")
+        if exc.is_out_of_memory:
+            return TpmError("The TPM is busy with other programs' objects. Close other TPM-using applications and try again.")
+        return TpmError(f"TPM error 0x{exc.rc:X} (command 0x{exc.command:X})")
+    if isinstance(exc, tpm2.TransportError):
         text = str(exc)
-        if "ermission" in text or "denied" in text.lower():
-            raise TpmUnavailable("No permission to use the TPM. Add your user to the 'tss' group and log in again.") from exc
-        raise TpmUnavailable(f"Could not open the TPM ({tcti()}): {exc}") from exc
-    handles: list = []
-    esys._thessley_handles = handles  # objects to release when the session ends
+        if "ermission" in text:
+            return TpmUnavailable("No permission to use the TPM. Add your user to the 'tss' group (sudo usermod -aG tss $USER) and log in again.")
+        return TpmUnavailable(f"Could not talk to the TPM ({tcti()}): {text}")
+    return TpmError(str(exc))
+
+
+@contextlib.contextmanager
+def _session(connection: str | None = None) -> Iterator[tpm2.Tpm]:
     try:
-        yield esys
-    except TSS2 as exc:
-        raise _map_error(exc, constants) from exc
+        client = tpm2.Tpm(tpm2.open_transport(connection or tcti()))
+    except tpm2.TransportError as exc:
+        raise _map_error(exc) from exc
+    try:
+        yield client
+    except (tpm2.TpmRcError, tpm2.TransportError) as exc:
+        raise _map_error(exc) from exc
     finally:
-        for h in reversed(handles):
-            with contextlib.suppress(Exception):
-                esys.flush_context(h)
         with contextlib.suppress(Exception):
-            esys.close()
-
-
-def _map_error(exc, constants) -> TpmError:
-    rc = exc.rc & 0xFFF if hasattr(exc, "rc") else 0
-    rc_fmt = exc.error if hasattr(exc, "error") else None
-    text = str(exc)
-    if "lockout" in text.lower() or rc == 0x921:
-        return TpmLockedOut("The TPM has locked out password attempts for a while (too many wrong PINs).")
-    if "authorization" in text.lower() or "auth" in text.lower() and "fail" in text.lower() or rc in (0x98E, 0x9A2, 0x1A2, 0x18E, 0x8E, 0xA2) or rc_fmt in (0x8E, 0xA2):
-        return TpmWrongAuth("Wrong PIN.")
-    return TpmError(f"TPM error: {text}")
+            client.close()
 
 
 def _mapped(method):
-    """Turn the library's exceptions into our own at the call, not only when the session closes."""
+    """Turn TPM errors into ours at the call, not only when the session closes."""
     import functools
 
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
-        _, constants, _, _, TSS2 = _lib()
         try:
             return method(self, *args, **kwargs)
-        except TSS2 as exc:
-            raise _map_error(exc, constants) from exc
+        except (tpm2.TpmRcError, tpm2.TransportError) as exc:
+            raise _map_error(exc) from exc
     return wrapper
 
 
-def _track(esys, handle):
-    esys._thessley_handles.append(handle)
-    return handle
+HIERARCHIES = {"owner": tpm2.RH_OWNER, "endorsement": tpm2.RH_ENDORSEMENT}
 
 
-def _release(esys, handle) -> None:
-    """Free a loaded object now. A TPM only holds a few at once; the kernel's resource manager hides that
-    on a real machine, but code that works with three or fewer works everywhere."""
+def _storage_primary(t: tpm2.Tpm, hierarchy: str | None = None) -> tuple[int, str]:
+    """The standard storage root: same template -> same key every time on this TPM.
+
+    Normally under the owner hierarchy. If the system keeps the owner password to itself (Windows may), the
+    same template under the endorsement hierarchy is used instead, and keys remember which one they need.
+    """
+    order = [hierarchy] if hierarchy else ["owner", "endorsement"]
+    last: Exception | None = None
+    for name in order:
+        try:
+            handle, _, _ = t.create_primary(HIERARCHIES[name], tpm2.SRK_TEMPLATE)
+            return handle, name
+        except tpm2.TpmRcError as exc:
+            if not exc.is_wrong_auth:
+                raise
+            last = exc
+    raise last  # type: ignore[misc]
+
+
+def _release(t: tpm2.Tpm, handle: int) -> None:
     with contextlib.suppress(Exception):
-        esys.flush_context(handle)
-    if handle in esys._thessley_handles:
-        esys._thessley_handles.remove(handle)
+        t.flush(handle)
+    if handle in t.loaded:
+        t.loaded.remove(handle)
 
 
-def _storage_primary(esys):
-    """The standard storage root: same template -> same key every time on this TPM."""
-    _, constants, types, _, _ = _lib()
-    A = constants.TPMA_OBJECT
-    attrs = A.FIXEDTPM | A.FIXEDPARENT | A.SENSITIVEDATAORIGIN | A.USERWITHAUTH | A.RESTRICTED | A.DECRYPT | A.NODA
-    template = types.TPM2B_PUBLIC.parse("ecc256:null:aes128cfb", objectAttributes=attrs)
-    handle, *_ = esys.create_primary(types.TPM2B_SENSITIVE_CREATE(), template)
-    return _track(esys, handle)
-
-
-def _sig_scheme():
-    _, constants, types, _, _ = _lib()
-    return types.TPMT_SIG_SCHEME(scheme=constants.TPM2_ALG.ECDSA, details=types.TPMU_SIG_SCHEME(any=types.TPMS_SCHEME_HASH(hashAlg=constants.TPM2_ALG.SHA256)))
-
-
-def _no_ticket():
-    _, constants, types, _, _ = _lib()
-    return types.TPMT_TK_HASHCHECK(tag=constants.TPM2_ST.HASHCHECK, hierarchy=constants.TPM2_RH.NULL)
+def _parse_public(tpmt_public: bytes) -> tuple[int, int, int, bytes, bytes]:
+    """(type, nameAlg, attributes, x, y) of an ECC TPMT_PUBLIC."""
+    r = tpm2.Reader(tpmt_public)
+    kind, name_alg, attributes = r.u16(), r.u16(), r.u32()
+    r.tpm2b()  # authPolicy
+    if r.u16() != tpm2.ALG_NULL:
+        r.u16()
+        r.u16()
+    if r.u16() != tpm2.ALG_NULL:
+        r.u16()
+    r.u16()  # curve
+    if r.u16() != tpm2.ALG_NULL:
+        r.u16()
+    return kind, name_alg, attributes, r.tpm2b(), r.tpm2b()
 
 
 def spki_from_public(public_blob: bytes) -> bytes:
     """SubjectPublicKeyInfo DER (what the sites store) from a marshalled TPM2B_PUBLIC."""
-    _, _, types, _, _ = _lib()
-    pub, _ = types.TPM2B_PUBLIC.unmarshal(public_blob)
-    point = pub.publicArea.unique.ecc
-    key = ec.EllipticCurvePublicNumbers(int.from_bytes(bytes(point.x), "big"), int.from_bytes(bytes(point.y), "big"), ec.SECP256R1()).public_key()
+    *_, x, y = _parse_public(tpm2.Reader(public_blob).tpm2b())
+    key = ec.EllipticCurvePublicNumbers(int.from_bytes(x, "big"), int.from_bytes(y, "big"), ec.SECP256R1()).public_key()
     return key.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
 
 
@@ -178,34 +181,28 @@ def spki_from_public(public_blob: bytes) -> bytes:
 def create_key(auth: bytes, connection: str | None = None) -> dict:
     """Create the signing key. Returns {"public": b64, "private": b64} (marshalled blobs; the private one is
     encrypted by this TPM and useless anywhere else)."""
-    _, constants, types, _, _ = _lib()
-    A = constants.TPMA_OBJECT
-    with _session(connection) as esys:
-        parent = _storage_primary(esys)
-        attrs = A.FIXEDTPM | A.FIXEDPARENT | A.SENSITIVEDATAORIGIN | A.USERWITHAUTH | A.SIGN_ENCRYPT  # DA protection stays ON
-        template = types.TPM2B_PUBLIC.parse("ecc256:ecdsa-sha256", objectAttributes=attrs)
-        private, public, *_ = esys.create(parent, types.TPM2B_SENSITIVE_CREATE(types.TPMS_SENSITIVE_CREATE(userAuth=auth)), template)
-        return {"public": _b64(public.marshal()), "private": _b64(private.marshal())}
+    with _session(connection) as t:
+        parent, hierarchy = _storage_primary(t)
+        private, public = t.create(parent, auth, tpm2.KEY_TEMPLATE)  # dictionary-attack protection stays ON
+        blobs = {"public": _b64(public), "private": _b64(private)}
+        if hierarchy != "owner":
+            blobs["hierarchy"] = hierarchy  # keys made before this field existed are owner-hierarchy keys
+        return blobs
 
 
-def _load_key(esys, blobs: dict, auth: bytes):
-    _, constants, types, _, _ = _lib()
-    parent = _storage_primary(esys)
-    private, _ = types.TPM2B_PRIVATE.unmarshal(_unb64(blobs["private"]))
-    public, _ = types.TPM2B_PUBLIC.unmarshal(_unb64(blobs["public"]))
-    handle = _track(esys, esys.load(parent, private, public))
-    _release(esys, parent)
-    esys.tr_set_auth(handle, auth)
+def _load_key(t: tpm2.Tpm, blobs: dict, auth: bytes) -> int:
+    parent, _ = _storage_primary(t, blobs.get("hierarchy", "owner"))
+    handle, _ = t.load(parent, _unb64(blobs["private"]), _unb64(blobs["public"]))
+    _release(t, parent)
     return handle
 
 
 def sign(blobs: dict, auth: bytes, message: bytes, connection: str | None = None) -> bytes:
     """ECDSA-SHA256 over `message`, DER-encoded like every other Thessley signature."""
-    _, constants, types, _, _ = _lib()
-    with _session(connection) as esys:
-        key = _load_key(esys, blobs, auth)
-        sig = esys.sign(key, types.TPM2B_DIGEST(hashlib.sha256(message).digest()), _sig_scheme(), _no_ticket())
-        return asym_utils.encode_dss_signature(int.from_bytes(bytes(sig.signature.ecdsa.signatureR), "big"), int.from_bytes(bytes(sig.signature.ecdsa.signatureS), "big"))
+    with _session(connection) as t:
+        key = _load_key(t, blobs, auth)
+        r, s = t.sign(key, auth, hashlib.sha256(message).digest())
+        return asym_utils.encode_dss_signature(int.from_bytes(r, "big"), int.from_bytes(s, "big"))
 
 
 def check_auth(blobs: dict, auth: bytes, connection: str | None = None) -> None:
@@ -217,7 +214,6 @@ def check_auth(blobs: dict, auth: bytes, connection: str | None = None) -> None:
 
 EK_CERT_NV = {"ecc": 0x01C0000A}
 EK_CHAIN_NV = 0x01C00100          # Intel keeps the manufacturer's intermediate certificates here
-EK_PERSISTENT = 0x81010001        # the default EK handle, when the maker provisioned one
 MAX_CHAIN = 8
 AIA_TIMEOUT = 10
 
@@ -294,66 +290,45 @@ class Attestor:
         self._ek_certs_override = ek_certs
         self._fetch = fetch
         self._cm = None
-        self.esys = None
+        self.t: tpm2.Tpm | None = None
 
     def __enter__(self):
         self._cm = _session(self.connection)
-        self.esys = self._cm.__enter__()
+        self.t = self._cm.__enter__()
         try:
             self._setup()
         except BaseException:
-            self._cm.__exit__(*__import__("sys").exc_info())  # release whatever was loaded before failing
+            import sys
+            self._cm.__exit__(*sys.exc_info())  # release whatever was loaded before failing
             raise
         return self
-
-    def _setup(self):
-        _, constants, types, _, _ = _lib()
-        A = constants.TPMA_OBJECT
-        self.parent = _storage_primary(self.esys)
-        # Attestation key: restricted signing key, fixed to this chip, no password (it lives for one enrolment).
-        attrs = A.FIXEDTPM | A.FIXEDPARENT | A.SENSITIVEDATAORIGIN | A.USERWITHAUTH | A.RESTRICTED | A.SIGN_ENCRYPT | A.NODA
-        template = types.TPM2B_PUBLIC.parse("ecc256:ecdsa-sha256:null", objectAttributes=attrs)
-        private, public, *_ = self.esys.create(self.parent, types.TPM2B_SENSITIVE_CREATE(), template)
-        self.ak = _track(self.esys, self.esys.load(self.parent, private, public))
-        _release(self.esys, self.parent)
-        self.ak_public_area = public.publicArea
 
     def __exit__(self, *exc):
         return self._cm.__exit__(*exc)
 
-    # -- endorsement key and its certificates --------------------------------------------------
-
-    def _create_ek(self):
-        _, constants, types, tpm_utils, _ = _lib()
-        template = tpm_utils.ek_template.lookup("EK-ECC256").template
-        handle, *_ = self.esys.create_primary(types.TPM2B_SENSITIVE_CREATE(), template, primary_handle=constants.ESYS_TR.RH_ENDORSEMENT)
-        return _track(self.esys, handle)
-
-    def _nv_read(self, index: int) -> bytes | None:
-        _, constants, types, _, TSS2 = _lib()
+    def _setup(self):
+        # Attestation key: restricted signing key, fixed to this chip, no password (it lives for one enrolment).
         try:
-            nv = self.esys.tr_from_tpmpublic(index)
-            public = self.esys.nv_read_public(nv)[0]
-            size = public.nvPublic.dataSize
-            out, offset = b"", 0
-            while offset < size:
-                chunk = min(512, size - offset)
-                out += bytes(self.esys.nv_read(nv, chunk, offset, auth_handle=constants.ESYS_TR.RH_OWNER))
-                offset += chunk
-            return out
-        except TSS2:
-            return None
+            parent, _ = _storage_primary(self.t)
+            private, public = self.t.create(parent, b"", tpm2.AK_TEMPLATE)
+            self.ak, _ = self.t.load(parent, private, public)
+            _release(self.t, parent)
+        except (tpm2.TpmRcError, tpm2.TransportError) as exc:
+            raise _map_error(exc) from exc
+        self._ak_public = tpm2.Reader(public).tpm2b()
+
+    # -- endorsement key and its certificates --------------------------------------------------
 
     @_mapped
     def ek_certs(self) -> list[bytes]:
         """The EK certificate first, then every intermediate we can find, as DER."""
         if self._ek_certs_override is not None:
             return list(self._ek_certs_override)
-        leaf = self._nv_read(EK_CERT_NV["ecc"])
+        leaf = self.t.nv_read(EK_CERT_NV["ecc"])
         if not leaf:
             raise TpmError("This TPM has no EK certificate, so it cannot be verified by a site.")
         chain = _split_der_certs(leaf)[:1]
-        extra = self._nv_read(EK_CHAIN_NV)
+        extra = self.t.nv_read(EK_CHAIN_NV)
         if extra:
             chain += _split_der_certs(extra)
         return _fetch_issuers(chain, self._fetch)
@@ -361,12 +336,12 @@ class Attestor:
     @_mapped
     def ek_point(self) -> tuple[int, int]:
         """The chip's endorsement key (P-256 point)."""
-        ek = self._create_ek()
+        ek, public, _ = self.t.create_primary(tpm2.RH_ENDORSEMENT, tpm2.EK_TEMPLATE)
         try:
-            pub = self.esys.read_public(ek)[0].publicArea.unique.ecc
-            return int.from_bytes(bytes(pub.x), "big"), int.from_bytes(bytes(pub.y), "big")
+            *_, x, y = _parse_public(public)
+            return int.from_bytes(x, "big"), int.from_bytes(y, "big")
         finally:
-            _release(self.esys, ek)
+            _release(self.t, ek)
 
     @_mapped
     def ek_matches_certificate(self, cert_der: bytes) -> bool:
@@ -380,32 +355,86 @@ class Attestor:
 
     def ak_public(self) -> bytes:
         """TPMT_PUBLIC of the attestation key (what the site names the credential after)."""
-        return self.ak_public_area.marshal()
+        return self._ak_public
 
     @_mapped
     def activate(self, credential_blob: bytes, secret: bytes) -> bytes:
         """TPM2_ActivateCredential: recovers the site's secret only if this chip holds both the EK and the AK."""
-        _, constants, types, _, _ = _lib()
-        cred, _ = types.TPM2B_ID_OBJECT.unmarshal(credential_blob)
-        enc, _ = types.TPM2B_ENCRYPTED_SECRET.unmarshal(secret)
-        session = _track(self.esys, self.esys.start_auth_session(
-            constants.ESYS_TR.NONE, constants.ESYS_TR.NONE, constants.TPM2_SE.POLICY,
-            types.TPMT_SYM_DEF(algorithm=constants.TPM2_ALG.NULL), constants.TPM2_ALG.SHA256))
-        self.esys.policy_secret(constants.ESYS_TR.RH_ENDORSEMENT, session)
-        ek = self._create_ek()
+        session, _ = self.t.start_policy_session()
+        self.t.policy_secret(session)
+        ek, _, _ = self.t.create_primary(tpm2.RH_ENDORSEMENT, tpm2.EK_TEMPLATE)
         try:
-            out = self.esys.activate_credential(self.ak, ek, cred, enc, session1=constants.ESYS_TR.PASSWORD, session2=session)
+            return self.t.activate_credential(self.ak, ek, session, credential_blob, secret)
         finally:
-            _release(self.esys, ek)
-            _release(self.esys, session)
-        return bytes(out)
+            _release(self.t, ek)
+            _release(self.t, session)  # the TPM already ended it on success; a failed flush is fine
 
     @_mapped
     def certify(self, key_blobs: dict, key_auth: bytes, nonce: bytes) -> dict:
         """Have the AK sign a statement about the signing key, bound to `nonce`."""
-        _, constants, types, _, _ = _lib()
-        key = _load_key(self.esys, key_blobs, key_auth)
-        scheme = types.TPMT_SIG_SCHEME(scheme=constants.TPM2_ALG.NULL)
-        attest, signature = self.esys.certify(key, self.ak, nonce, scheme, session1=constants.ESYS_TR.PASSWORD, session2=constants.ESYS_TR.PASSWORD)
-        key_public = self.esys.read_public(key)[0].publicArea
-        return {"attest": bytes(attest.attestationData), "signature": signature.marshal(), "key_public": key_public.marshal()}
+        key = _load_key(self.t, key_blobs, key_auth)
+        attest, signature = self.t.certify(key, key_auth, self.ak, nonce)
+        public, _ = self.t.read_public(key)
+        return {"attest": attest, "signature": signature, "key_public": public}
+
+
+# ---- diagnostics ------------------------------------------------------------------------------------------------
+
+def diagnose() -> Iterator[str]:
+    """Step-by-step probe for the diagnostics report: what this computer's TPM lets an ordinary program do."""
+    yield f"connection: {tcti()}"
+    try:
+        t = tpm2.Tpm(tpm2.open_transport(tcti()))
+    except tpm2.TransportError as exc:
+        yield f"cannot open: {exc}"
+        return
+    try:
+        def step(name, fn):
+            try:
+                out = fn()
+                return f"{name}: ok" + (f" ({out})" if out else "")
+            except tpm2.TpmRcError as exc:
+                return f"{name}: FAILED rc=0x{exc.rc:X}"
+            except Exception as exc:
+                return f"{name}: FAILED {exc.__class__.__name__}: {exc}"
+
+        def maker():
+            v = t.property(0x105)
+            return bytes.fromhex(f"{v:08x}").decode("ascii", "replace").strip("\0 ") if v is not None else "unknown"
+
+        yield step("manufacturer", maker)
+        yield step("max wrong tries before lockout", lambda: t.property(0x20F))
+        yield step("lockout recovery seconds", lambda: t.property(0x211))
+        yield step("EK certificate (ECC) in NV", lambda: f"{len(t.nv_read(EK_CERT_NV['ecc']) or b'')} bytes")
+        yield step("EK intermediate certificates in NV", lambda: f"{len(t.nv_read(EK_CHAIN_NV) or b'')} bytes")
+
+        def srk():
+            h, used = _storage_primary(t)
+            _release(t, h)
+            return f"under the {used} hierarchy"
+
+        def ek():
+            h, pub, _ = t.create_primary(tpm2.RH_ENDORSEMENT, tpm2.EK_TEMPLATE)
+            _release(t, h)
+
+        def keycycle():
+            h, _ = _storage_primary(t)
+            auth = hashlib.sha256(b"diagnose").digest()
+            priv, pub = t.create(h, auth, tpm2.KEY_TEMPLATE)
+            k, _ = t.load(h, priv, pub)
+            _release(t, h)
+            t.sign(k, auth, hashlib.sha256(b"x").digest())
+            _release(t, k)
+
+        def session():
+            s, _ = t.start_policy_session()
+            t.policy_secret(s)
+            _release(t, s)
+
+        yield step("create storage key", srk)
+        yield step("create endorsement key", ek)
+        yield step("create, load and sign with a key", keycycle)
+        yield step("policy session on the endorsement hierarchy", session)
+    finally:
+        with contextlib.suppress(Exception):
+            t.close()

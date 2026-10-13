@@ -109,7 +109,6 @@ class FakeTpm:
     class Attestor:
         """Stands in for the chip's attestation steps."""
         broken = False
-        ak_public_area = type("A", (), {"marshal": lambda self: b"ak-public"})()
 
         def __enter__(self):
             if FakeTpm.Attestor.broken:

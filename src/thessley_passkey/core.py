@@ -109,7 +109,7 @@ class Service:
                 secret = at.activate(base64.b64decode(challenge["credential_blob"]), base64.b64decode(challenge["secret"]))
                 parts = at.certify(tpm_blobs, kek, req.nonce.encode("ascii"))
             return {
-                "ak_public": protocol.b64(at.ak_public_area.marshal()),
+                "ak_public": protocol.b64(at.ak_public()),
                 "activated_secret": protocol.b64(secret),
                 "certify_info": protocol.b64(parts["attest"]),
                 "certify_signature": protocol.b64(parts["signature"]),

@@ -164,6 +164,24 @@ class Interop(unittest.TestCase):
             with self.assertRaises(tpm.TpmWrongAuth):
                 at.certify(self.key, hashlib.sha256(b"wrong").digest(), self.NONCE)
 
+    @unittest.skipUnless(__import__("shutil").which("tpm2_changeauth"), "needs tpm2-tools to set the owner password")
+    def test_owner_password_held_by_the_system_falls_back_to_the_endorsement_hierarchy(self):
+        """Windows may keep the owner password to itself; the storage key then lives under the endorsement hierarchy."""
+        env = dict(os.environ, TPM2TOOLS_TCTI=CONN)
+        subprocess.run(["tpm2_changeauth", "-c", "o", "ownerpw"], env=env, check=True, capture_output=True)
+        try:
+            auth = hashlib.sha256(b"fallback").digest()
+            blobs = tpm.create_key(auth)
+            self.assertEqual(blobs.get("hierarchy"), "endorsement")
+            spki = tpm.spki_from_public(base64.b64decode(blobs["public"]))
+            sig = tpm.sign(blobs, auth, b"x")
+            serialization.load_der_public_key(spki).verify(sig, b"x", ec.ECDSA(hashes.SHA256()))
+            # and the attestation steps still work on such a system
+            with tpm.Attestor(CONN) as at:
+                at.certify(blobs, auth, self.NONCE)
+        finally:
+            subprocess.run(["tpm2_changeauth", "-c", "o", "-p", "ownerpw"], env=env, capture_output=True)
+
 
 if __name__ == "__main__":
     unittest.main()

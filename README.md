@@ -11,7 +11,8 @@ choose **Approve** or **Deny**, then unlock with your **PIN** and/or **FIDO2 sec
 ## Install
 
 ```
-sudo apt install python3-gi gir1.2-adw-1 python3-cryptography python3-requests python3-fido2
+sudo apt install python3-gi gir1.2-adw-1 python3-cryptography python3-requests python3-fido2 \
+                 python3-tpm2-pytss python3-asn1crypto     # the last two only for the TPM option
 ./install.sh          # installs for your user and registers the link handler
 ./uninstall.sh        # removes it (add --purge to also delete enrolled keys)
 ```
@@ -19,39 +20,62 @@ sudo apt install python3-gi gir1.2-adw-1 python3-cryptography python3-requests p
 Needs Python 3.10+, GTK 4 and libadwaita 1.5+ (Ubuntu 24.04 or newer), and
 python-fido2 1.2+ for security keys (Ubuntu 26.04 ships 2.0; older: `pip install fido2`).
 
-### Using a security key
-The key needs to be reachable by your user (`/dev/hidraw*`). On most desktops that is
-automatic; if not, install `libfido2-1` (it ships the udev rules) and re-plug the key.
-The key must support **hmac-secret** (YubiKey 5, Nitrokey 3, SoloKeys, most FIDO2 keys).
-Verified on hardware with a YubiKey 5 (OTP+FIDO+CCID): `tests/hardware_fido2_check.py` passes.
-Creating the credential needs the key's own PIN once (YubiKeys require it when a PIN is set); after
-that, approving only needs a touch.
 
 ## Enrol this computer
 1. On the site, log in, open your profile page, press **Add a device**, then **Open on this device**.
-2. In the window choose a name and how to protect the key: **PIN**, **Security key**, or both.
+2. In the window choose a name and how to protect the key (the TPM option is first when your computer has a usable TPM).
 3. Done. The site now lists this computer under *Thessley Passkey devices* (you can revoke it there).
 
 ## How the key is protected
-* The signing key is a software EC P-256 key (not hardware attested: the site shows it as
-  "Unverified", unlike a phone's TEE/StrongBox).
-* It is stored only **encrypted** (AES-256-GCM) in `~/.local/share/thessley-passkey/devices.json`
-  (file mode 600). The wrapping key comes from:
-  * **PIN**: scrypt (64 MiB) of the PIN. At least 6 characters. 5 wrong PINs in a row lock
-    the device for a growing delay.
-  * **Security key**: the key's hmac-secret output for a random per-device salt. It needs the physical
-    key and a touch (plus the key's own PIN only if the key demands it).
-  * **Both**: the two secrets are combined, so each alone is useless.
-* Every approval asks again; nothing stays unlocked.
-* A login request is only answered for a site this computer was enrolled with. A link for any
-  other site (for example a relayed QR) gets a warning and no Approve button.
-* Redirects are never followed and TLS is always verified. `http://` is refused (a development
-  switch for localhost exists only for tests).
 
-**Limits to know about:** the PIN lock-out counter lives in the same file, so someone who copies
-the file can try PINs offline (scrypt makes that slow, so use a long PIN, or protect with a security
-key). A key that is the only protection can be used by anyone who holds it and can touch it. For
-the strongest setup choose **PIN and security key**.
+Choose one when you enrol:
+
+| Option | Where the signing key lives | What unlocks it |
+|---|---|---|
+| **TPM chip + PIN** (recommended where available) | Inside this computer's TPM 2.0 chip; it cannot be copied off the machine | Your PIN, checked by the chip itself |
+| **TPM chip + PIN + security key** | Same | PIN and a touch of your FIDO2 key |
+| **PIN** | Software key, stored encrypted | scrypt of the PIN (at least 6 characters) |
+| **Security key** | Software key, stored encrypted | The key's hmac-secret, needs a touch |
+| **PIN and security key** | Software key, stored encrypted | Both |
+
+Every approval asks again; nothing stays unlocked. Encrypted data is in
+`~/.local/share/thessley-passkey/devices.json` (mode 600).
+
+**Software keys:** 5 wrong PINs in a row lock the device for a growing delay, but that counter is in the
+same file, so someone who copies the file can guess PINs offline (scrypt makes that slow). Prefer the TPM
+option or add a security key.
+
+**TPM keys:** the chip counts wrong PINs and locks out by itself, and the key never leaves it. The app
+counts attempts too and stops after 5, so a guesser cannot use up the chip's lockout, which is shared with
+everything else that uses the TPM (disk unlock, for example). Anyone who can use the TPM device can still
+lock it out on purpose; that is true of every TPM tool.
+
+### TPM option: setup and what the site learns
+Your user needs access to the TPM device: `sudo usermod -aG tss $USER`, then log in again. Without it the
+window explains why the TPM choices are missing.
+
+When you enrol with a TPM key the app also proves to the site that the key really is inside a genuine TPM:
+1. it sends the chip's **endorsement key certificate chain** (stored in the chip; missing links are fetched
+   from the maker's published URLs, https only);
+2. the site checks the chain against its trusted TPM maker roots and sends back a secret that **only that
+   chip** can open (credential activation);
+3. a fresh attestation key in the chip **certifies the signing key**, bound to this enrolment.
+
+If the site accepts, the device shows **TPM 2.0 hardware** in its device list. If anything fails (no TPM
+certificate, a maker the site does not trust yet, an older site), enrolment still succeeds, shown as
+"Unverified", and the window says why.
+
+**What it proves:** the key is non-exportable and lives in a TPM from the maker named in its certificate.
+**What it does not:** revocation (certificate revocation lists are not checked) or anything about the
+chip's firmware. Tested with Intel PTT (Core / N-series; the site ships Intel's On-Die CA root). Other makers
+need their root certificate added to the site's `tpm-roots` folder; only ECC P-256 endorsement keys are
+supported.
+
+### Using a security key
+The key needs to be reachable by your user (`/dev/hidraw*`); on most desktops that is automatic (install
+`libfido2-1` for the udev rules otherwise). It must support **hmac-secret** (YubiKey 5, Nitrokey 3, most
+FIDO2 keys). Creating the credential needs the key's own PIN once if one is set; approving only needs a touch.
+Verified on hardware with a YubiKey 5.
 
 ## Terminal mode
 ```
@@ -63,8 +87,10 @@ thessley-passkey remove DEVICE_ID
 
 ## Tests
 ```
-python3 -m unittest discover -s tests -p 'test_*.py'        # 24 unit tests, no network
+python3 -m unittest discover -s tests -p 'test_*.py'        # 40 unit tests, no network
 python3 tests/hardware_fido2_check.py                          # YOU run this with your security key
+IMPL=drupal|wp THESSLEY_TPM_TCTI=swtpm:host=127.0.0.1,port=2321 python3 tests/tpm_interop.py   # vs. a software TPM (swtpm)
+sudo setfacl -m u:$USER:rw /dev/tpmrm0; python3 tests/real_tpm_check.py   # this computer's real TPM (read-only + short-lived objects); remove the ACL afterwards
 # against a Drupal sandbox running thessley_passkey (never a live site):
 THESSLEY_PASSKEY_DEV=1 BASE=http://127.0.0.1:10190 SSH_HOST=<host> DRUPAL_DIR=~/drupal-sandbox python3 tests/integration_drupal.py
 THESSLEY_PASSKEY_DEV=1 BASE=http://127.0.0.1:10190 SSH_HOST=<host> DRUPAL_DIR=~/drupal-sandbox xvfb-run -a python3 tests/gui_smoke.py

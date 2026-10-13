@@ -61,5 +61,10 @@ def enrolled_text(device, origin: str, protection: str, note: str) -> str:
 
 
 def device_summary(device) -> str:
-    proof = " · verified by the site" if device.attestation == "tpm" else ""
+    if device.attestation == "tpm":
+        proof = " · verified by the site"
+    elif device.uses_tpm:
+        proof = " · not verified: " + (device.attestation_note or "the site could not verify the TPM")
+    else:
+        proof = ""
     return f"{device.username or 'account'} · {device.label} · {PROTECTION_LABELS.get(device.protection, device.protection)}{proof}"

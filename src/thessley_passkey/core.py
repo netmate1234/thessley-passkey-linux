@@ -171,6 +171,8 @@ class Service:
             public_key=public_key, protection=protection, wrapped=wrapped, kdf=kdf, fido2=fido, tpm=tpm_blobs,
             attestation=str(answer.get("attestation") or ""),
         )
+        if tpm_blobs and device.attestation != "tpm":
+            device.attestation_note = self.last_note.removeprefix("Enrolled without hardware proof: ")
         self.vault.add(device)
         return device
 

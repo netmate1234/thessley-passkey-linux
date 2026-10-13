@@ -215,6 +215,8 @@ def check_auth(blobs: dict, auth: bytes, connection: str | None = None) -> None:
 EK_CERT_NV = {"ecc": 0x01C0000A}
 EK_CHAIN_NV = 0x01C00100          # Intel keeps the manufacturer's intermediate certificates here
 MAX_CHAIN = 8
+AMD_MANUFACTURER = 0x414D4400      # TPM_PT_MANUFACTURER "AMD" padded with a zero byte
+AMD_AIA = "https://ftpm.amd.com/pki/aia/"   # AMD firmware TPMs keep no certificate in NV; AMD hosts them
 AIA_TIMEOUT = 10
 
 
@@ -240,24 +242,45 @@ def _cert(der: bytes):
     return a1.Certificate.load(der)
 
 
-def _fetch_issuers(chain: list[bytes], fetch=None) -> list[bytes]:
-    """Complete the chain: for the certificate whose issuer is missing, follow its 'CA Issuers' link (https only)."""
-    def default_fetch(url: str) -> bytes | None:
-        import requests
-        if not url.startswith("https://"):
-            return None
+def _https_get(url: str) -> bytes | None:
+    """A small certificate over https only. A plain-http link is tried as https (AMD publishes http links to an https host)."""
+    import requests
+    if url.startswith("http://"):
+        url = "https://" + url[len("http://"):]
+    if not url.startswith("https://"):
+        return None
+    if url.startswith(AMD_AIA):
+        url = url.lower()  # AMD's certificates list their links in capitals, but only lower case is served
+    for attempt in range(3):  # AMD's server now and then drops a connection
         try:
             resp = requests.get(url, timeout=AIA_TIMEOUT, allow_redirects=False)
         except requests.RequestException:
-            return None
+            continue
         return resp.content if resp.status_code == 200 and len(resp.content) < 16384 else None
+    return None
 
-    fetch = fetch or default_fetch
+
+def amd_ek_cert_url(x: int, y: int) -> str:
+    """Where AMD publishes the certificate of a firmware TPM's ECC endorsement key (same scheme as tpm2_getekcertificate)."""
+    digest = hashlib.sha256(bytes.fromhex("00004444") + x.to_bytes(32, "big") + y.to_bytes(32, "big")).digest()
+    return AMD_AIA + digest[:16].hex()
+
+
+def _issued_by(child, parent) -> bool:
+    """Did `parent` issue `child`? By key identifiers when both have them (AMD's names do not match exactly), else by name."""
+    aki, ski = child.authority_key_identifier, parent.key_identifier
+    if aki and ski:
+        return bytes(aki) == bytes(ski)
+    return child.issuer.dump() == parent.subject.dump()
+
+
+def _fetch_issuers(chain: list[bytes], fetch=None) -> list[bytes]:
+    """Complete the chain: for the certificate whose issuer is missing, follow its 'CA Issuers' link (https only)."""
+    fetch = fetch or _https_get
     chain = list(chain)
     while len(chain) < MAX_CHAIN:
         certs = [_cert(c) for c in chain]
-        subjects = {c.subject.dump() for c in certs}
-        missing = next((c for c in certs if c.issuer.dump() != c.subject.dump() and c.issuer.dump() not in subjects), None)
+        missing = next((c for c in certs if c.issuer.dump() != c.subject.dump() and not any(_issued_by(c, p) for p in certs if p is not c)), None)
         if missing is None:
             break
         urls = []
@@ -273,7 +296,7 @@ def _fetch_issuers(chain: list[bytes], fetch=None) -> list[bytes]:
                 issuer = _cert(data)
             except ValueError:
                 continue
-            if issuer.subject.dump() == missing.issuer.dump():
+            if _issued_by(missing, issuer):
                 found = data
                 break
         if found is None:
@@ -325,13 +348,26 @@ class Attestor:
         if self._ek_certs_override is not None:
             return list(self._ek_certs_override)
         leaf = self.t.nv_read(EK_CERT_NV["ecc"])
-        if not leaf:
-            raise TpmError("This TPM has no EK certificate, so it cannot be verified by a site.")
-        chain = _split_der_certs(leaf)[:1]
+        if leaf:
+            chain = _split_der_certs(leaf)[:1]
+        else:
+            chain = self._published_ek_cert()
         extra = self.t.nv_read(EK_CHAIN_NV)
         if extra:
             chain += _split_der_certs(extra)
         return _fetch_issuers(chain, self._fetch)
+
+    def _published_ek_cert(self) -> list[bytes]:
+        """AMD firmware TPMs: fetch the EK certificate AMD publishes, and only trust it if it is this chip's."""
+        missing = TpmError("This TPM has no EK certificate, so it cannot be verified by a site.")
+        if self.t.property(0x105) != AMD_MANUFACTURER:
+            raise missing
+        der = (self._fetch or _https_get)(amd_ek_cert_url(*self.ek_point()))
+        if not der:
+            raise TpmError("This TPM has no EK certificate on the chip, and AMD's copy could not be downloaded.")
+        if not self.ek_matches_certificate(der):
+            raise TpmError("The certificate AMD published does not belong to this TPM.")
+        return [der]
 
     @_mapped
     def ek_point(self) -> tuple[int, int]:

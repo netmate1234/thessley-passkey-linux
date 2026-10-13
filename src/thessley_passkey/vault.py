@@ -88,6 +88,7 @@ class Device:
     attestation: str = ""                      # what the site was able to verify: "" (nothing) or "tpm"
     failures: int = 0
     locked_until: int = 0
+    attestation_note: str = ""                 # why the site could not verify the TPM (empty when verified or not a TPM key)
 
     @property
     def uses_pin(self) -> bool:

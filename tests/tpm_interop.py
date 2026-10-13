@@ -29,8 +29,10 @@ if IMPL == "wp":
 else:
     TPM_PHP = _WP / "infra" / "thessley_passkey" / "src" / "Tpm.php"
     SHIM = ROOT / "tests" / "php" / "tpm_cli.php"
-if not TPM_PHP.exists():
+if os.environ.get("TPM_PHP"):  # test another copy of the verifier, e.g. the one in the thessley-passkey-server repo
     TPM_PHP = Path(os.environ["TPM_PHP"])
+if not TPM_PHP.exists():
+    raise SystemExit(f"verifier not found: {TPM_PHP}")
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization

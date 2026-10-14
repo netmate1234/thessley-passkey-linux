@@ -24,6 +24,8 @@ def cli(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="thessley-passkey", description="Thessley Passkey for Linux (terminal mode)")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list", help="show enrolled sites")
+    dt = sub.add_parser("details", help="show everything about one enrolled device (TPM version, protection, key)")
+    dt.add_argument("device_id")
     rm = sub.add_parser("remove", help="forget a device on this computer")
     rm.add_argument("device_id")
     en = sub.add_parser("enroll", help="enrol this computer from an enrol link")
@@ -46,6 +48,12 @@ def cli(argv: list[str]) -> int:
                 print(f"{d.id}  {d.origin}  {d.username or '-'}  {d.label}  [{d.protection}]")
                 if d.protection.startswith("tpm") and d.attestation != "tpm":
                     print(f"    not verified by the site: {d.attestation_note or 'no reason recorded (enrolled before this was kept)'}")
+        elif a.cmd == "details":
+            from .uicommon import device_details_text
+            found = [d for d in svc.vault.all() if d.id.startswith(a.device_id)]
+            if len(found) != 1:
+                sys.exit("No device with that id." if not found else "Several devices start with that id; give more of it.")
+            print(device_details_text(found[0]))
         elif a.cmd == "remove":
             svc.vault.remove(a.device_id)
             print("Removed locally. Also revoke it on the site's profile page.")
@@ -96,7 +104,7 @@ def main() -> int:
     if argv[:1] == ["--diagnose"]:
         from . import diagnose
         return diagnose.run()
-    if argv and argv[0] in ("list", "remove", "enroll", "respond", "-h", "--help"):
+    if argv and argv[0] in ("list", "details", "remove", "enroll", "respond", "-h", "--help"):
         return cli(argv)
     if _pick_ui() == "qt":
         from .ui_qt import run as run_qt

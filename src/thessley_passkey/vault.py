@@ -89,6 +89,7 @@ class Device:
     failures: int = 0
     locked_until: int = 0
     attestation_note: str = ""                 # why the site could not verify the TPM (empty when verified or not a TPM key)
+    last_used: int = 0                         # when this device last unlocked its key for an approval (0 = never)
 
     @property
     def uses_pin(self) -> bool:
@@ -194,7 +195,7 @@ class Vault:
                 if d.id != device_id:
                     continue
                 if success:
-                    d.failures, d.locked_until = 0, 0
+                    d.failures, d.locked_until, d.last_used = 0, 0, now
                 else:
                     d.failures += 1
                     if d.failures >= MAX_FAILURES:

@@ -1,8 +1,11 @@
 import base64
+import dataclasses
+import json
 import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -200,6 +203,64 @@ class LinkTests(unittest.TestCase):
             self.assertIsNone(link.parse(mklink(origin="http://evil.example")))
         finally:
             del os.environ["THESSLEY_PASSKEY_DEV"]
+
+
+class DetailsTests(unittest.TestCase):
+    def device(self, **kw):
+        base = dict(id="abc", origin="https://site.example", credential_id="c", username="ann", label="Laptop", enrolled_at=1_700_000_000,
+                    public_key=base64.b64encode(b"k" * 91).decode(), protection="pin", wrapped={}, kdf={"n": 32768, "r": 8, "p": 1})
+        base.update(kw)
+        return vault.Device(**base)
+
+    def text(self, device, chip=None):
+        from thessley_passkey import details
+        return details.format_text(details.describe(device, chip))
+
+    def test_a_software_pin_device(self):
+        text = self.text(self.device())
+        for needle in ("https://site.example", "ann", "Laptop", "never", "scrypt (cost 32768", "AES-256-GCM", "Public key fingerprint"):
+            self.assertIn(needle, text)
+        self.assertNotIn("TPM chip in this computer", text)
+
+    def test_a_tpm_device_shows_the_chip_and_the_sites_verdict(self):
+        chip = {"family": "2.0", "spec_revision": "1.59", "manufacturer": "INTC", "vendor_string": "ADL", "firmware": "600.18.12.1465",
+                "max_tries": 31, "tries_so_far": 2, "recovery_seconds": 86400}
+        text = self.text(self.device(protection="tpm+pin+fido2", fido2={"rp_id": "thessley.app"}, attestation="tpm", tpm={}), chip)
+        for needle in ("Intel (INTC)", "ADL", "2.0, specification revision 1.59", "600.18.12.1465", "31 in a row (2 used", "24 hours",
+                       "Verified by the site", "checked by the TPM chip itself", "FIDO2 hmac-secret for thessley.app"):
+            self.assertIn(needle, text)
+
+    def test_an_unverified_tpm_device_says_why(self):
+        text = self.text(self.device(protection="tpm+pin", attestation="", attestation_note="the site does not trust AMD"), "not readable now: no TPM")
+        self.assertIn("Not verified: the site does not trust AMD", text)
+        self.assertIn("not readable now: no TPM", text)
+
+    def test_a_missing_chip_never_breaks_the_view(self):
+        from thessley_passkey import details, tpm
+        with mock.patch.object(tpm, "chip_info", side_effect=tpm.TpmUnavailable("no chip")):
+            self.assertIn("no chip", details.read_chip())
+        with mock.patch.object(tpm, "chip_info", side_effect=RuntimeError("boom")):
+            self.assertIn("boom", details.read_chip())
+
+    def test_an_unknown_maker_is_shown_as_is(self):
+        self.assertIn("ZZZZ", self.text(self.device(protection="tpm+pin"), {"manufacturer": "ZZZZ"}))
+
+    def test_last_used_is_recorded_on_success_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            v = vault.Vault(Path(d) / "devices.json")
+            v.add(self.device())
+            v.record_attempt("abc", success=False, now=100)
+            self.assertEqual(v.all()[0].last_used, 0)
+            v.record_attempt("abc", success=True, now=200)
+            self.assertEqual(v.all()[0].last_used, 200)
+
+    def test_devices_saved_before_last_used_existed_still_load(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "devices.json"
+            old = dataclasses.asdict(self.device())
+            del old["last_used"]
+            path.write_text(json.dumps({"version": 1, "devices": [old]}))
+            self.assertEqual(vault.Vault(path).all()[0].last_used, 0)
 
 
 class ElevatedRelaunchTests(unittest.TestCase):

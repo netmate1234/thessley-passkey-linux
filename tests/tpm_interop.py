@@ -115,6 +115,20 @@ class Interop(unittest.TestCase):
                           key_public=b64(parts["key_public"]), nonce=(nonce or self.NONCE).decode() if parts.get("nonce") is None else parts["nonce"], spki=b64(parts["spki"]))
             return parts, verdict
 
+    def test_chip_info_and_details_of_a_real_key(self):
+        from thessley_passkey import details, vault
+        chip = tpm.chip_info(CONN)
+        self.assertEqual(chip["family"], "2.0")
+        self.assertRegex(chip["spec_revision"], r"^\d+\.\d{2}$")
+        self.assertTrue(chip["manufacturer"])
+        self.assertGreater(chip["max_tries"], 0)
+        device = vault.Device(id="d1", origin="https://s", credential_id="c", username="u", label="l", enrolled_at=1, public_key=base64.b64encode(self.spki).decode(),
+                              protection="tpm+pin", wrapped={}, tpm=self.key, attestation="tpm")
+        text = details.format_text(details.describe(device, chip))
+        for needle in ("TPM version", "2.0, specification revision", "ECC NIST P-256", "cannot be moved to another TPM", "generated inside the chip",
+                       "Verified by the site", "Firmware version", "checked by the TPM chip itself"):
+            self.assertIn(needle, text)
+
     def test_honest_flow(self):
         parts, verdict = self.run_proof()
         self.assertIsNotNone(parts["chain"])

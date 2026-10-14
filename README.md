@@ -77,9 +77,12 @@ The key needs to be reachable by your user (`/dev/hidraw*`); on most desktops th
 FIDO2 keys). Creating the credential needs the key's own PIN once if one is set; approving only needs a touch.
 Verified on hardware with a YubiKey 5.
 
+The window has a **Details** button (an info icon on Linux) on every enrolled device with the same information.
+
 ## Terminal mode
 ```
 thessley-passkey list
+thessley-passkey details DEVICE_ID   # protection, key, the site's verdict, and this computer's TPM (maker, version, firmware)
 thessley-passkey enroll 'thessleypasskey://auth?type=enroll&...' --protect pin
 thessley-passkey respond 'thessleypasskey://auth?type=login&...' --approve
 thessley-passkey remove DEVICE_ID

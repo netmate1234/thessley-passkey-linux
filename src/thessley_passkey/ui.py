@@ -24,7 +24,7 @@ from .vault import Device, Locked  # noqa: E402
 
 APP_ID = "se.thessley.Passkey"
 from .uicommon import (  # noqa: E402
-    ENROLL_EXPLANATION, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, device_summary, enrolled_text, explain,
+    ENROLL_EXPLANATION, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, device_details_text, device_summary, enrolled_text, explain,
 )
 
 
@@ -200,6 +200,11 @@ class Window(Adw.ApplicationWindow):
             group.add(_plain_row("Nothing enrolled yet", "On a site's profile page choose Add a device, then press “Open on this device”."))
         for d in devices:
             row = _plain_row(d.origin, device_summary(d))
+            info = Gtk.Button(icon_name="dialog-information-symbolic", valign=Gtk.Align.CENTER)
+            info.add_css_class("flat")
+            info.set_tooltip_text("Details: TPM version, protection, key")
+            info.connect("clicked", self._show_details, d)
+            row.add_suffix(info)
             btn = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
             btn.add_css_class("flat")
             btn.set_tooltip_text("Remove from this computer")
@@ -224,6 +229,19 @@ class Window(Adw.ApplicationWindow):
             return
         self.request = req
         (self.show_enroll if req.type == "enroll" else self.show_approve)(req)
+
+    def _show_details(self, _btn, device: Device) -> None:
+        dialog = Adw.Dialog(title=f"{device.label} on {device.origin}", content_width=620, content_height=560)
+        label = Gtk.Label(label=device_details_text(device), xalign=0, yalign=0, selectable=True, wrap=False,
+                          margin_top=12, margin_bottom=12, margin_start=16, margin_end=16)
+        label.add_css_class("monospace")
+        scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+        scroll.set_child(label)
+        box = Adw.ToolbarView()
+        box.add_top_bar(Adw.HeaderBar())
+        box.set_content(scroll)
+        dialog.set_child(box)
+        dialog.present(self)
 
     def _confirm_remove(self, _btn, device: Device) -> None:
         dialog = Adw.AlertDialog(heading="Remove this computer?")

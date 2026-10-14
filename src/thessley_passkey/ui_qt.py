@@ -17,7 +17,7 @@ from . import __version__, elevate, link, protectors, vault
 from .core import Service, default_label
 from .interaction import Cancelled, Interaction
 from .uicommon import (
-    ENROLL_EXPLANATION, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, device_summary, enrolled_text, explain,
+    ENROLL_EXPLANATION, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, device_details_text, device_summary, enrolled_text, explain,
 )
 
 STYLE = """
@@ -291,6 +291,9 @@ class Window(QtWidgets.QMainWindow):
                 text.addWidget(_label(d.origin))
                 text.addWidget(_label(device_summary(d), "caption"))
                 row.addLayout(text, 1)
+                more = _button("Details")
+                more.clicked.connect(lambda _=False, dev=d: self._show_details(dev))
+                row.addWidget(more)
                 rm = _button("Remove")
                 rm.setProperty("kind", "danger")
                 rm.clicked.connect(lambda _=False, dev=d: self._confirm_remove(dev))
@@ -316,6 +319,22 @@ class Window(QtWidgets.QMainWindow):
             return
         self.request = req
         (self.show_enroll if req.type == "enroll" else self.show_approve)(req)
+
+    def _show_details(self, device) -> None:
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle(f"{device.label} on {device.origin}")
+        dialog.resize(640, 560)
+        layout = QtWidgets.QVBoxLayout(dialog)
+        text = QtWidgets.QPlainTextEdit(device_details_text(device))
+        text.setReadOnly(True)
+        text.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+        text.setFont(font)
+        layout.addWidget(text)
+        close = _button("Close")
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close)
+        dialog.exec()
 
     def _confirm_remove(self, device) -> None:
         box = QtWidgets.QMessageBox(self)

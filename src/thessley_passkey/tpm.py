@@ -71,6 +71,44 @@ def status() -> tuple[bool, str]:
     return True, ""
 
 
+def _text(value: int | None) -> str:
+    """A TPM property that holds four ASCII characters."""
+    return bytes.fromhex(f"{value:08x}").decode("ascii", "replace").strip("\0 ") if value is not None else ""
+
+
+def chip_info(connection: str | None = None) -> dict:
+    """What this computer's TPM says about itself (fixed properties; nothing is created or changed).
+
+    Keys: family, spec_revision (e.g. "1.59"), spec_date, manufacturer (the 4-letter code, e.g. "INTC"),
+    vendor_string, firmware, max_tries, tries_so_far, recovery_seconds, lockout_interval_seconds.
+    Properties a chip does not report are left out. Raises TpmUnavailable when there is no usable TPM.
+    """
+    with _session(connection) as t:
+        info: dict = {}
+        family = _text(t.property(0x100))
+        if family:
+            info["family"] = family
+        revision, year, day = t.property(0x102), t.property(0x104), t.property(0x103)
+        if revision is not None:
+            info["spec_revision"] = f"{revision // 100}.{revision % 100:02d}"
+        if year and day:
+            info["spec_date"] = f"{year} (day {day})"
+        maker = _text(t.property(0x105))
+        if maker:
+            info["manufacturer"] = maker
+        vendor = "".join(_text(t.property(n)) for n in (0x106, 0x107, 0x108, 0x109)).strip()
+        if vendor:
+            info["vendor_string"] = vendor
+        fw1, fw2 = t.property(0x10B), t.property(0x10C)
+        if fw1 is not None:
+            info["firmware"] = f"{fw1 >> 16}.{fw1 & 0xFFFF}" + (f".{fw2 >> 16}.{fw2 & 0xFFFF}" if fw2 else "")
+        for key, number in (("tries_so_far", 0x20E), ("max_tries", 0x20F), ("lockout_interval_seconds", 0x210), ("recovery_seconds", 0x211)):
+            value = t.property(number)
+            if value is not None:
+                info[key] = value
+        return info
+
+
 def _b64(b: bytes) -> str:
     return base64.b64encode(b).decode("ascii")
 

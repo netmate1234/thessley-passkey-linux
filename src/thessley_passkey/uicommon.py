@@ -68,3 +68,10 @@ def device_summary(device) -> str:
     else:
         proof = ""
     return f"{device.username or 'account'} · {device.label} · {PROTECTION_LABELS.get(device.protection, device.protection)}{proof}"
+
+
+def device_details_text(device) -> str:
+    """The Details view of a device as plain text (reads the TPM chip's facts for TPM devices)."""
+    from . import details
+    chip = details.read_chip() if device.uses_tpm else None
+    return details.format_text(details.describe(device, chip))

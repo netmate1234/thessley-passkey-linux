@@ -24,7 +24,7 @@ from .vault import Device, Locked  # noqa: E402
 
 APP_ID = "se.thessley.Passkey"
 from .uicommon import (  # noqa: E402
-    ENROLL_EXPLANATION, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, device_details_text, device_summary, enrolled_text, explain,
+    ENROLL_EXPLANATION, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, device_details, device_summary, enrolled_text, explain,
 )
 
 
@@ -231,15 +231,21 @@ class Window(Adw.ApplicationWindow):
         (self.show_enroll if req.type == "enroll" else self.show_approve)(req)
 
     def _show_details(self, _btn, device: Device) -> None:
-        dialog = Adw.Dialog(title=f"{device.label} on {device.origin}", content_width=620, content_height=560)
-        label = Gtk.Label(label=device_details_text(device), xalign=0, yalign=0, selectable=True, wrap=False,
-                          margin_top=12, margin_bottom=12, margin_start=16, margin_end=16)
-        label.add_css_class("monospace")
-        scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
-        scroll.set_child(label)
+        dialog = Adw.Dialog(title=f"{device.label} on {device.origin}", content_width=560, content_height=640)
+        page = Adw.PreferencesPage()
+        for title, rows in device_details(device):
+            group = Adw.PreferencesGroup(title=title)
+            for name, value in rows:
+                row = Adw.ActionRow(title=GLib.markup_escape_text(name), subtitle=GLib.markup_escape_text(value))
+                row.set_subtitle_selectable(True)
+                row.set_subtitle_lines(0)   # show the whole value, wrapped
+                row.set_title_lines(0)
+                row.add_css_class("property")  # value first, name small: how libadwaita shows key/value pairs
+                group.add(row)
+            page.add(group)
         box = Adw.ToolbarView()
         box.add_top_bar(Adw.HeaderBar())
-        box.set_content(scroll)
+        box.set_content(page)
         dialog.set_child(box)
         dialog.present(self)
 

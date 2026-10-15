@@ -252,35 +252,18 @@ class Window(Adw.ApplicationWindow):
     def _confirm_remove(self, _btn, device: Device) -> None:
         dialog = Adw.AlertDialog(heading="Remove this computer?")
         dialog.set_body(f"{device.origin}\nYou will not be able to log in to this site from here until you enrol again. "
-                        "Also revoke it on the site's profile page. Next you will be asked to unlock this device.")
+                        "Also revoke it on the site's profile page.")
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("remove", "Remove")
         dialog.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
 
         def done(_d, response):
-            if response != "remove":
-                return
-            # Step two: unlock the key as for an approval, so someone at an unlocked computer cannot delete it.
-            ui = GtkInteraction(self)
-
-            def work():
-                try:
-                    self.service.remove(device, ui)
-                    GLib.idle_add(self.show_home)
-                except Cancelled:
-                    GLib.idle_add(self.show_notice, "")
-                except Exception as exc:
-                    GLib.idle_add(self._remove_failed, self.explain(exc))
-
-            threading.Thread(target=work, daemon=True).start()
+            if response == "remove":
+                self.service.vault.remove(device.id)
+                self.show_home()
 
         dialog.connect("response", done)
         dialog.present(self)
-
-    def _remove_failed(self, message: str) -> bool:
-        self.show_notice("")
-        self.toasts.add_toast(Adw.Toast(title=message))
-        return False
 
     def show_enroll(self, req: link.AuthRequest) -> None:
         col = self._column()

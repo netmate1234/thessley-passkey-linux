@@ -97,16 +97,6 @@ class Service:
         key = serialization.load_der_private_key(der, password=None)
         return lambda message: key.sign(message, ec.ECDSA(hashes.SHA256()))
 
-    # ---- removal -------------------------------------------------------------------
-
-    def remove(self, device: Device, interaction: Interaction) -> None:
-        """Forget a device on this computer. Two steps: the caller has already asked "are you sure?"; this is the
-        second, the same unlock an approval needs (PIN, security key, TPM). Whoever is only sitting at an
-        unlocked computer cannot delete the keys. Wrong tries count towards the device's lockout like any other."""
-        sign = self._signer(device, interaction)
-        sign(b"thessley_passkey_v1|remove|" + device.id.encode("ascii", "replace"))  # a throwaway signature; it is never sent anywhere
-        self.vault.remove(device.id)
-
     # ---- enrol ---------------------------------------------------------------------
 
     def _attest_tpm(self, client, req: AuthRequest, tpm_blobs: dict, kek: bytes) -> dict | None:

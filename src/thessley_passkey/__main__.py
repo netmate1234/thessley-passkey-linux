@@ -28,6 +28,7 @@ def cli(argv: list[str]) -> int:
     dt.add_argument("device_id")
     rm = sub.add_parser("remove", help="forget a device on this computer")
     rm.add_argument("device_id")
+    rm.add_argument("--yes", action="store_true", help="skip the first question (the PIN / key unlock is always asked)")
     en = sub.add_parser("enroll", help="enrol this computer from an enrol link")
     en.add_argument("link")
     en.add_argument("--protect", choices=protectors.PROTECTIONS, default="pin")
@@ -55,7 +56,13 @@ def cli(argv: list[str]) -> int:
                 sys.exit("No device with that id." if not found else "Several devices start with that id; give more of it.")
             print(device_details_text(found[0]))
         elif a.cmd == "remove":
-            svc.vault.remove(a.device_id)
+            found = [d for d in svc.vault.all() if d.id.startswith(a.device_id)]
+            if len(found) != 1:
+                sys.exit("No device with that id." if not found else "Several devices start with that id; give more of it.")
+            d = found[0]
+            if not a.yes and input(f"Remove {d.username or 'account'} on {d.origin} from this computer? [y/N] ").strip().lower() != "y":
+                sys.exit("Nothing removed.")
+            svc.remove(d, ui)  # step two: unlock the key as for an approval
             print("Removed locally. Also revoke it on the site's profile page.")
         elif a.cmd == "enroll":
             d = svc.enroll(_need(a.link), a.label, a.protect, ui)

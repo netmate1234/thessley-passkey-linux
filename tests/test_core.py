@@ -486,6 +486,38 @@ class ServiceTests(unittest.TestCase):
             self.svc.respond(self.login_req(), dev, True, ScriptedUI(["123456"]))  # even the right PIN is refused while locked
         self.assertFalse(self.server.calls)
 
+    def test_removal_needs_the_unlock_not_just_the_click(self):
+        dev = self.enroll("pin", ["123456"])
+        with self.assertRaises(core.WrongSecret):
+            self.svc.remove(dev, ScriptedUI(["000000"]))
+        self.assertEqual(len(self.vault.all()), 1)                     # a wrong PIN deletes nothing...
+        self.assertEqual(self.vault.all()[0].failures, 1)              # ...and counts towards the lockout
+        self.svc.remove(dev, ScriptedUI(["123456"]))
+        self.assertEqual(self.vault.all(), [])
+
+    def test_removal_is_refused_while_locked_and_when_cancelled(self):
+        from thessley_passkey.interaction import Cancelled
+
+        class Backs(ScriptedUI):
+            def get_pin(self, prompt, confirm=False):
+                raise Cancelled()
+
+        dev = self.enroll("pin", ["123456"])
+        with self.assertRaises(Cancelled):
+            self.svc.remove(dev, Backs([]))
+        self.assertEqual(len(self.vault.all()), 1)
+        for _ in range(vault.MAX_FAILURES):
+            with self.assertRaises(core.WrongSecret):
+                self.svc.remove(dev, ScriptedUI(["000000"]))
+        with self.assertRaises(vault.Locked):
+            self.svc.remove(dev, ScriptedUI(["123456"]))
+        self.assertEqual(len(self.vault.all()), 1)
+
+    def test_removal_with_a_security_key_needs_the_key(self):
+        dev = self.enroll("fido2", [])
+        self.svc.remove(dev, ScriptedUI([]))
+        self.assertEqual(self.vault.all(), [])
+
     def test_right_pin_resets_failures(self):
         dev = self.enroll("pin", ["123456"])
         with self.assertRaises(core.WrongSecret):

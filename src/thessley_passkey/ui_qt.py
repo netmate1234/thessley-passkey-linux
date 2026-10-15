@@ -122,6 +122,7 @@ class Bridge(QtCore.QObject):
     notice = QtCore.Signal(str)
     finished = QtCore.Signal(bool, str)
     failed = QtCore.Signal(str)
+    home = QtCore.Signal(str)
 
 
 class QtInteraction(Interaction):
@@ -208,6 +209,7 @@ class Window(QtWidgets.QMainWindow):
         self.bridge.notice.connect(self._set_notice)
         self.bridge.finished.connect(self.show_result)
         self.bridge.failed.connect(self._show_error)
+        self.bridge.home.connect(self.show_home)
         self.notice = _label("", "notice")
         self.error = _label("", "error")
         self.error.hide()
@@ -350,12 +352,23 @@ class Window(QtWidgets.QMainWindow):
         box.setIcon(QtWidgets.QMessageBox.Warning)
         box.setWindowTitle("Remove this computer?")
         box.setText(f"{device.origin}\nYou will not be able to log in to this site from here until you enrol again. "
-                    "Also revoke it on the site's profile page.")
+                    "Also revoke it on the site's profile page. Next you will be asked to unlock this device.")
         box.setStandardButtons(QtWidgets.QMessageBox.Cancel | QtWidgets.QMessageBox.Yes)
         box.button(QtWidgets.QMessageBox.Yes).setText("Remove")
-        if box.exec() == QtWidgets.QMessageBox.Yes:
-            self.service.vault.remove(device.id)
-            self.show_home()
+        if box.exec() != QtWidgets.QMessageBox.Yes:
+            return
+        # Step two: unlock the key as for an approval, so someone at an unlocked computer cannot delete it.
+        ui = QtInteraction(self.bridge)
+
+        def work():
+            try:
+                self.service.remove(device, ui)
+                self.bridge.home.emit("")
+            except Cancelled:
+                self.bridge.home.emit("")
+            except Exception as exc:
+                self.bridge.home.emit(explain(exc))
+        self._worker(work)
 
     def show_enroll(self, req: link.AuthRequest) -> None:
         protections, tpm_hint = available_protections()

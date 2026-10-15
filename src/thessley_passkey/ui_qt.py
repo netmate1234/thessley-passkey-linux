@@ -64,6 +64,7 @@ def apply_theme(app: QtWidgets.QApplication) -> None:
     app.setStyle("Fusion")
     if dark:
         app.setPalette(dark_palette())
+    app.setProperty("thessley_error_color", "#ff7b72" if dark else "#c01c28")
     app.setStyleSheet(STYLE.replace("@ERROR@", "#ff7b72" if dark else "#c01c28")
                       .replace("@PRIMARY_OFF@", "#2c4a73" if dark else "#9db8dd"))
 
@@ -93,6 +94,54 @@ def _button(text: str, kind: str = "") -> QtWidgets.QPushButton:
     btn = QtWidgets.QPushButton(text)
     if kind:
         btn.setProperty("kind", kind)
+    return btn
+
+
+def _icon(kind: str, color: QtGui.QColor, size: int = 22) -> QtGui.QIcon:
+    """A small line icon drawn with the painter (no icon font or image files): 'info' = a circled i, 'bin' = a waste bin."""
+    ratio = 2  # drawn at twice the size so it stays sharp on high-DPI screens
+    pix = QtGui.QPixmap(size * ratio, size * ratio)
+    pix.setDevicePixelRatio(ratio)
+    pix.fill(Qt.transparent)
+    p = QtGui.QPainter(pix)
+    p.setRenderHint(QtGui.QPainter.Antialiasing)
+    pen = QtGui.QPen(color, 1.8)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    s = float(size)
+    if kind == "info":
+        p.drawEllipse(QtCore.QRectF(2, 2, s - 4, s - 4))
+        p.drawPoint(QtCore.QPointF(s / 2, s * 0.32))
+        p.drawLine(QtCore.QPointF(s / 2, s * 0.46), QtCore.QPointF(s / 2, s * 0.72))
+    else:  # bin
+        p.drawLine(QtCore.QPointF(s * 0.2, s * 0.27), QtCore.QPointF(s * 0.8, s * 0.27))         # lid
+        p.drawLine(QtCore.QPointF(s * 0.4, s * 0.27), QtCore.QPointF(s * 0.4, s * 0.17))         # handle
+        p.drawLine(QtCore.QPointF(s * 0.4, s * 0.17), QtCore.QPointF(s * 0.6, s * 0.17))
+        p.drawLine(QtCore.QPointF(s * 0.6, s * 0.17), QtCore.QPointF(s * 0.6, s * 0.27))
+        body = QtGui.QPainterPath()                                                                # tapered body
+        body.moveTo(s * 0.26, s * 0.27)
+        body.lineTo(s * 0.31, s * 0.84)
+        body.lineTo(s * 0.69, s * 0.84)
+        body.lineTo(s * 0.74, s * 0.27)
+        p.drawPath(body)
+        p.drawLine(QtCore.QPointF(s * 0.44, s * 0.42), QtCore.QPointF(s * 0.44, s * 0.7))        # slats
+        p.drawLine(QtCore.QPointF(s * 0.56, s * 0.42), QtCore.QPointF(s * 0.56, s * 0.7))
+    p.end()
+    return QtGui.QIcon(pix)
+
+
+def _icon_button(kind: str, tooltip: str, color: QtGui.QColor) -> QtWidgets.QPushButton:
+    """A square icon-only button. The tooltip and accessible name carry the words for mouse hover and screen readers."""
+    btn = QtWidgets.QPushButton()
+    btn.setIcon(_icon(kind, color))
+    btn.setIconSize(QtCore.QSize(22, 22))
+    btn.setFixedSize(40, 40)
+    btn.setToolTip(tooltip)
+    btn.setAccessibleName(tooltip)
+    btn.setObjectName(kind + "-button")
+    btn.setCursor(Qt.PointingHandCursor)
+    btn.setStyleSheet("QPushButton { padding: 0; }")
     return btn
 
 
@@ -294,11 +343,10 @@ class Window(QtWidgets.QMainWindow):
                 text.addWidget(_label(d.origin))
                 text.addWidget(_label(device_summary(d), "caption"))
                 row.addLayout(text, 1)
-                more = _button("Details")
+                more = _icon_button("info", "Details: TPM version, protection, key", self.palette().color(QtGui.QPalette.ButtonText))
                 more.clicked.connect(lambda _=False, dev=d: self._show_details(dev))
                 row.addWidget(more)
-                rm = _button("Remove")
-                rm.setProperty("kind", "danger")
+                rm = _icon_button("bin", "Remove from this computer", QtGui.QColor(QtWidgets.QApplication.instance().property("thessley_error_color") or "#c01c28"))
                 rm.clicked.connect(lambda _=False, dev=d: self._confirm_remove(dev))
                 row.addWidget(rm)
                 col.addWidget(card)

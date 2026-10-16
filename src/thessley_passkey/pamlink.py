@@ -81,7 +81,7 @@ class PamRequest:
             return "enroll"
         if self.type == "login":
             return "screen"
-        if self.service == "thessley-enroll":
+        if self.service == "thessley-enroll" or self.tty == "add-device":  # Linux names the service, Windows the terminal
             return "device"
         if self.service == "sshd" or (not self.service and self.tty == "ssh"):
             return "ssh"

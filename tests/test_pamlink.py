@@ -80,6 +80,10 @@ class KindTest(unittest.TestCase):
         r = pamlink.parse(mklink("sudo", tty="-", s="thessley-enroll"))
         self.assertEqual((r.kind, r.heading, r.terminal), ("device", "Approve adding a device", ""))
 
+    def test_adding_a_device_as_the_windows_server_sends_it(self):
+        r = pamlink.parse(mklink("sudo", tty="add-device"))
+        self.assertEqual((r.kind, r.heading, r.terminal), ("device", "Approve adding a device", ""))
+
     def test_screen_login(self):
         r = pamlink.parse(mklink("login", tty="-", s="gdm-thessley"))
         self.assertEqual((r.kind, r.heading, r.ip, r.terminal), ("screen", "Approve screen login", "", ""))

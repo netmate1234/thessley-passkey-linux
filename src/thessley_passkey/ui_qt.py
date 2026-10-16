@@ -13,7 +13,7 @@ import threading
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Qt
 
-from . import __version__, elevate, link, protectors, vault
+from . import __version__, elevate, link, pamlink, protectors, vault
 from .core import Service, default_label
 from .interaction import Cancelled, Interaction
 from .uicommon import (
@@ -461,7 +461,8 @@ class Window(QtWidgets.QMainWindow):
             def go():
                 protection = combo.currentData()
                 label = name.text()
-                if elevate.needed_for(protection):
+                # Only a website's TPM proof needs administrator rights; enrolling as an approver for a computer does not.
+                if elevate.needed_for(protection, proof=not isinstance(req, pamlink.PamRequest)):
                     # Windows only lets administrators prove a key is in the TPM: explain, ask permission, reopen on this link.
                     box = QtWidgets.QMessageBox(self)
                     box.setIcon(QtWidgets.QMessageBox.Information)

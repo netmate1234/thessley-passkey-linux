@@ -17,9 +17,13 @@ def is_admin() -> bool:
         return False
 
 
-def needed_for(protection: str) -> bool:
-    """True when enrolling with this protection has to run as administrator, and this process is not."""
-    return os.name == "nt" and protection.startswith("tpm") and not is_admin()
+def needed_for(protection: str, proof: bool = True) -> bool:
+    """True when enrolling with this protection has to run as administrator, and this process is not.
+
+    `proof` is whether the enrolment includes the TPM proof for a website (TPM2_ActivateCredential, which Windows lets only
+    administrators run). Enrolling as an approver for a computer (thessley-pam) only makes a key in the TPM and signs with
+    it, which needs no administrator rights: pass proof=False there."""
+    return proof and os.name == "nt" and protection.startswith("tpm") and not is_admin()
 
 
 def _command(link: str) -> tuple[str, str]:

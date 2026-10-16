@@ -44,6 +44,35 @@ def mklink(kind="sudo", **kw):
     return f"thessleypam://{kind}?" + urlencode(q)
 
 
+class KindTest(unittest.TestCase):
+    """The link says "sudo" for ssh too; the screens must say what is really being approved."""
+
+    def test_ssh_with_service_and_client(self):
+        r = pamlink.parse(mklink("sudo", s="sshd", r="192.168.1.111"))
+        self.assertEqual((r.kind, r.heading, r.ip, r.terminal), ("ssh", "Approve ssh login", "192.168.1.111", ""))
+        self.assertIn("ssh", r.what)
+        self.assertIn("s=sshd", r.raw)
+        self.assertIn("r=192.168.1.111", r.raw)
+
+    def test_old_computer_without_service_is_told_by_the_terminal(self):
+        self.assertEqual(pamlink.parse(mklink("sudo")).kind, "ssh")  # tty=ssh
+        r = pamlink.parse(mklink("sudo", tty="/dev/pts/3"))
+        self.assertEqual((r.kind, r.heading, r.terminal), ("sudo", "Approve sudo", "/dev/pts/3"))
+
+    def test_screen_login(self):
+        r = pamlink.parse(mklink("login", tty="-", s="gdm-thessley"))
+        self.assertEqual((r.kind, r.heading, r.ip, r.terminal), ("screen", "Approve screen login", "", ""))
+
+    def test_enroll_and_bad_display_fields(self):
+        self.assertEqual(pamlink.parse(mklink("enroll")).kind, "enroll")
+        r = pamlink.parse(mklink("sudo", s="ssh d;rm", r="not an address"))
+        self.assertEqual((r.service, r.client), ("", ""))  # dropped, the rest of the link still counts
+
+    def test_display_fields_do_not_change_the_signed_string(self):
+        a = pamlink.canonical("sudo", "RequestId12345678", MID, "ubuntu", "NonceNonce12345678", 1700000000, "approve")
+        self.assertEqual(a, b"thessley_pam_v1|sudo|RequestId12345678|" + MID.encode() + b"|ubuntu|NonceNonce12345678|1700000000|approve")
+
+
 class ParseTest(unittest.TestCase):
     def test_valid_links(self):
         for kind in ("enroll", "sudo", "login"):
@@ -81,7 +110,7 @@ class ParseTest(unittest.TestCase):
         self.assertIsNone(link.parse_any("https://example.com"))
 
     def test_screens_see_the_same_names_for_both(self):
-        r = pamlink.parse(mklink("sudo"))
+        r = pamlink.parse(mklink("sudo", tty="/dev/pts/3", s="sudo"))
         self.assertEqual((r.kind_label, r.display, r.heading), ("Computer", "orangepi5 (192.168.1.200)", "Approve sudo"))
         self.assertEqual(r.origin, "computer:" + MID)
         s = link.parse_any("thessleypasskey://auth?type=2fa&id=" + "A" * 20 + "&nonce=" + "B" * 20 + "&origin=https%3A%2F%2Fsite.example")

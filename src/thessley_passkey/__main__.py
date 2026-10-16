@@ -75,7 +75,7 @@ def cli(argv: list[str]) -> int:
             if len(devices) > 1:
                 sys.exit("Several devices match; choose one with --device:\n" + "\n".join(f"  {d.id}  {d.username}  {d.label}" for d in devices))
             if not (a.approve or a.deny):
-                print(f"{req.kind_label}: {req.display}\nType: {req.type}\nFrom: {(req.ip + ' ' + req.country).strip() or getattr(req, 'tty', '') or '-'}\nAccount: {req.username or '-'}")
+                print(f"{req.kind_label}: {req.display}\nType: {req.type}\nFrom: {(req.ip + ' ' + req.country).strip() or getattr(req, 'terminal', '') or '-'}\nAccount: {req.username or '-'}")
                 a.approve = input("Approve? [y/N] ").strip().lower() == "y"
             print(svc.respond(req, devices[0], a.approve, ui))
     except (WrongSecret, Locked, ValueError, protectors.ProtectionError, UnknownSite, NetworkError, PamError) as exc:

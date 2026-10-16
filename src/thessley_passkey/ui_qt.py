@@ -496,8 +496,8 @@ class Window(QtWidgets.QMainWindow):
                 rows.append(("Account", req.username))
             if req.ip:
                 rows.append(("Requested from", f"{req.ip} {req.country}".strip()))
-            if getattr(req, "tty", ""):
-                rows.append(("Terminal", req.tty))
+            if getattr(req, "terminal", ""):
+                rows.append(("Terminal", req.terminal))
             col.addWidget(_rows(rows))
             if not devices:
                 col.addWidget(_label(NOT_ENROLLED.format(origin=req.display), "error"))

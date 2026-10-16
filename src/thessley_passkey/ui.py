@@ -339,8 +339,8 @@ class Window(Adw.ApplicationWindow):
             group.add(_plain_row("Account", req.username))
         if req.ip:
             group.add(_plain_row("Requested from", f"{req.ip} {req.country}".strip()))
-        if getattr(req, "tty", ""):
-            group.add(_plain_row("Terminal", req.tty))
+        if getattr(req, "terminal", ""):
+            group.add(_plain_row("Terminal", req.terminal))
         col.append(group)
 
         if not devices:

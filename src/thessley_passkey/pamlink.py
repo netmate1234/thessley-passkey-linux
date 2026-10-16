@@ -36,11 +36,17 @@ _HOST = re.compile(r"^[A-Za-z0-9.-]{1,64}$")
 _USER = re.compile(r"^[a-z_][a-z0-9_.-]{0,31}$")
 _TTY = re.compile(r"^[A-Za-z0-9/_.:-]{1,32}$")
 _FIELD = re.compile(r"^[^|\s]+$")
+_SERVICE = re.compile(r"^[a-z0-9_-]{1,32}$")
+_CLIENT = re.compile(r"^[0-9A-Fa-f.:]{1,45}$")
 
-HEADINGS = {"enroll": "Add this app as an approver", "sudo": "Approve sudo", "login": "Approve the login"}
+# The link says type "sudo" for every request that is not a screen login (ssh included), so what is really being
+# approved is told apart by the optional display-only fields: s (PAM service) and, for old computers, tty "ssh".
+HEADINGS = {"enroll": "Add this app as an approver", "sudo": "Approve sudo", "ssh": "Approve ssh login",
+            "screen": "Approve screen login"}
 WHAT = {
     "sudo": "Allow a sudo command on that computer",
-    "login": "Log in to that computer (login screen, lock screen or ssh)",
+    "ssh": "Let someone log in to that computer over ssh",
+    "screen": "Log in at that computer's login or lock screen",
 }
 
 
@@ -56,11 +62,31 @@ class PamRequest:
     hostname: str      # display only
     username: str      # the account on that computer; covered by the signature
     tty: str = ""      # display only
+    service: str = ""  # display only: the PAM service (sudo, sshd, gdm-thessley); older computers do not send it
+    client: str = ""   # display only: where an ssh login comes from
     raw: str = field(default="", compare=False)
 
     # What the screens call things. Shared names with link.AuthRequest, so one screen serves both.
-    ip = ""
     country = ""
+
+    @property
+    def ip(self) -> str:
+        """"Requested from": the ssh client's address (nothing for sudo or the screen, which are at the computer)."""
+        return self.client if self.kind == "ssh" else ""
+
+    @property
+    def kind(self) -> str:
+        if self.type == "enroll":
+            return "enroll"
+        if self.type == "login":
+            return "screen"
+        if self.service == "sshd" or (not self.service and self.tty == "ssh"):
+            return "ssh"
+        return "sudo"
+
+    @property
+    def terminal(self) -> str:
+        return self.tty if self.kind == "sudo" and self.tty != "-" else ""
 
     @property
     def origin(self) -> str:
@@ -77,11 +103,11 @@ class PamRequest:
 
     @property
     def heading(self) -> str:
-        return HEADINGS[self.type]
+        return HEADINGS[self.kind]
 
     @property
     def what(self) -> str:
-        return WHAT.get(self.type, "")
+        return WHAT.get(self.kind, "")
 
     @property
     def enroll_title(self) -> str:
@@ -93,7 +119,8 @@ class PamRequest:
 
     @property
     def enroll_hint(self) -> str:
-        return ("Only continue if you just ran “thessley-pam enroll” on that computer yourself. "
+        return ("This app will be asked to approve sudo, ssh and screen logins for this account. "
+                "Only continue if you just ran “thessley-pam enroll” on that computer yourself. "
                 "You will compare a 6-digit code with its screen.")
 
 
@@ -130,13 +157,20 @@ def parse(raw: str) -> PamRequest | None:
         return None
     if tty and not _TTY.match(tty):
         return None
+    service, client = q.get("s", ""), q.get("r", "")
+    service = service if _SERVICE.match(service) else ""
+    client = client if _CLIENT.match(client) else ""
     if parts.netloc == "enroll":
-        tty = ""
+        tty, service, client = "", "", ""
     fields = {"h": host, "p": port, "fp": fp, "id": rid, "n": nonce, "m": mid, "hn": hostname, "u": user}
     if tty:
         fields["tty"] = tty
+    if service:
+        fields["s"] = service
+    if client:
+        fields["r"] = client
     rebuilt = f"thessleypam://{parts.netloc}?" + urlencode(fields)  # only validated fields travel on
-    return PamRequest(parts.netloc, rid, nonce, host, port, fp, mid, hostname, user, tty, rebuilt)
+    return PamRequest(parts.netloc, rid, nonce, host, port, fp, mid, hostname, user, tty, service, client, rebuilt)
 
 
 def canonical(type_: str, request_id: str, machine_id: str, username: str, nonce: str, timestamp: int, action: str) -> bytes:

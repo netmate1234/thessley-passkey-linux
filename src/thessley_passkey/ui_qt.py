@@ -340,7 +340,7 @@ class Window(QtWidgets.QMainWindow):
                 row = QtWidgets.QHBoxLayout(card)
                 row.setContentsMargins(14, 10, 10, 10)
                 text = QtWidgets.QVBoxLayout()
-                text.addWidget(_label(d.origin))
+                text.addWidget(_label(d.title))
                 text.addWidget(_label(device_summary(d), "caption"))
                 row.addLayout(text, 1)
                 more = _icon_button("info", "Details: TPM version, protection, key", self.palette().color(QtGui.QPalette.ButtonText))
@@ -352,7 +352,7 @@ class Window(QtWidgets.QMainWindow):
                 col.addWidget(card)
             col.addWidget(_label("Paste a link", "notice"))
             paste = QtWidgets.QLineEdit()
-            paste.setPlaceholderText("thessleypasskey://…")
+            paste.setPlaceholderText("thessleypasskey://… or thessleypam://…")
             paste.setObjectName("paste")
             paste.returnPressed.connect(lambda: self._open_pasted(paste.text()))
             col.addWidget(paste)
@@ -364,7 +364,7 @@ class Window(QtWidgets.QMainWindow):
         self._page("home", build)
 
     def _open_pasted(self, text: str) -> None:
-        req = link.parse(text.strip())
+        req = link.parse_any(text.strip())
         if req is None:
             self.show_home("That is not a valid Thessley Passkey link.")
             return
@@ -374,7 +374,7 @@ class Window(QtWidgets.QMainWindow):
     def _show_details(self, device) -> None:
         import html
         dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle(f"{device.label} on {device.origin}")
+        dialog.setWindowTitle(f"{device.label} on {device.title}")
         dialog.resize(640, 600)
         layout = QtWidgets.QVBoxLayout(dialog)
         view = QtWidgets.QTextBrowser()
@@ -397,7 +397,7 @@ class Window(QtWidgets.QMainWindow):
         box = QtWidgets.QMessageBox(self)
         box.setIcon(QtWidgets.QMessageBox.Warning)
         box.setWindowTitle("Remove this computer?")
-        box.setText(f"{device.origin}\nYou will not be able to log in to this site from here until you enrol again. "
+        box.setText(f"{device.title}\nYou will not be able to log in to this " + ("computer" if device.kind == "computer" else "site") + " from here until you enrol again. "
                     "Also revoke it on the site's profile page.")
         box.setStandardButtons(QtWidgets.QMessageBox.Cancel | QtWidgets.QMessageBox.Yes)
         box.button(QtWidgets.QMessageBox.Yes).setText("Remove")
@@ -409,9 +409,9 @@ class Window(QtWidgets.QMainWindow):
         protections, tpm_hint = available_protections()
 
         def build(col):
-            col.addWidget(_label("Add this computer", "title"))
-            col.addWidget(_label("Only continue if you just pressed “Add a device” on this site yourself.", "dim"))
-            rows = [("Site", req.origin)]
+            col.addWidget(_label(req.enroll_title, "title"))
+            col.addWidget(_label(req.enroll_hint, "dim"))
+            rows = [(req.kind_label, req.display)]
             if req.ip:
                 rows.append(("Requested from", f"{req.ip} {req.country}".strip()))
             col.addWidget(_rows(rows))
@@ -432,7 +432,7 @@ class Window(QtWidgets.QMainWindow):
             self.notice.hide()
             col.addWidget(self.error)
             self.error.hide()
-            add = _button("Add this computer", "primary")
+            add = _button(req.enroll_button, "primary")
             cancel = _button("Cancel")
             cancel.clicked.connect(self.close)
             col.addWidget(add)
@@ -469,7 +469,7 @@ class Window(QtWidgets.QMainWindow):
                 def work():
                     try:
                         device = self.service.enroll(req, label, protection, ui)
-                        self.bridge.finished.emit(True, enrolled_text(device, req.origin, protection, self.service.last_note))
+                        self.bridge.finished.emit(True, enrolled_text(device, req.display, protection, self.service.last_note))
                     except Cancelled:
                         self.bridge.failed.emit("")
                     except Exception as exc:
@@ -483,15 +483,17 @@ class Window(QtWidgets.QMainWindow):
         devices = self.service.candidates(req)
 
         def build(col):
-            col.addWidget(_label("Log in" if req.type == "login" else "Confirm your login", "title"))
-            rows = [("Site", req.origin), ("What this does", TYPE_TEXT[req.type])]
+            col.addWidget(_label(req.heading, "title"))
+            rows = [(req.kind_label, req.display), ("What this does", req.what)]
             if req.username:
                 rows.append(("Account", req.username))
             if req.ip:
                 rows.append(("Requested from", f"{req.ip} {req.country}".strip()))
+            if getattr(req, "tty", ""):
+                rows.append(("Terminal", req.tty))
             col.addWidget(_rows(rows))
             if not devices:
-                col.addWidget(_label(NOT_ENROLLED.format(origin=req.origin), "error"))
+                col.addWidget(_label(NOT_ENROLLED.format(origin=req.display), "error"))
                 close = _button("Close")
                 close.clicked.connect(self.close)
                 col.addWidget(close)
@@ -560,9 +562,9 @@ def run(service: Service | None = None, argv: list[str] | None = None) -> int:
     app = QtWidgets.QApplication(argv)
     app.setApplicationName("Thessley Passkey")
     apply_theme(app)
-    raw = next((a for a in argv[1:] if a.startswith("thessleypasskey:")), None)
-    request = link.parse(raw) if raw else None
-    toast = "That link is not a valid Thessley Passkey link." if raw and request is None else ""
+    raw = next((a for a in argv[1:] if a.startswith(("thessleypasskey:", "thessleypam:"))), None)
+    request = link.parse_any(raw) if raw else None
+    toast = "That is not a valid Thessley link." if raw and request is None else ""
     window = Window(service or Service(), request, bool(raw), toast)
     window.show()
     if sys.platform == "win32":

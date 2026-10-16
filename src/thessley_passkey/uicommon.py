@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from . import protectors, protocol, tpm
 from .core import UnknownSite, WrongSecret
+from .pamlink import PamError
 from .protocol import NetworkError, ServerError
 from .vault import Locked
 
@@ -44,7 +45,7 @@ def available_protections() -> tuple[list[str], str]:
 
 def explain(exc: Exception) -> str:
     """User-facing text for anything the core can raise."""
-    if isinstance(exc, (WrongSecret, Locked, ValueError, protectors.ProtectionError, UnknownSite, NetworkError)):
+    if isinstance(exc, (WrongSecret, Locked, ValueError, protectors.ProtectionError, UnknownSite, NetworkError, PamError)):
         return str(exc)
     if isinstance(exc, ServerError):
         return protocol.friendly(exc)
@@ -61,6 +62,8 @@ def enrolled_text(device, origin: str, protection: str, note: str) -> str:
 
 
 def device_summary(device) -> str:
+    if device.kind == "computer":  # a Linux computer this app approves for: no site, no attestation to report
+        return f"{device.username or 'account'} · {device.label} · {PROTECTION_LABELS.get(device.protection, device.protection)}"
     if device.attestation == "tpm":
         proof = " · verified by the site"
     elif device.uses_tpm:

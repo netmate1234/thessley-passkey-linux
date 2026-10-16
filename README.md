@@ -79,6 +79,37 @@ Verified on hardware with a YubiKey 5.
 
 The window has a **Details** button (an info icon on Linux) on every enrolled device with the same information.
 
+## Linux computers: approve their sudo, login and ssh (a backup for your phone)
+
+Besides websites, this app can be an **approver for a Linux computer** that runs
+[thessley-pam-linux](https://gitlab.com/martin.lundstrom/thessley-pam-linux): the same signed approval your phone gives
+for `sudo`, the GNOME login and `ssh`. Use it as a second approver, so that losing the phone does not lock you out. The key is protected as
+for sites (PIN, security key, TPM).
+
+A computer shows a QR code, and this app cannot scan a screen, so the computer also prints the link as text:
+
+    # on the computer (once)             # add this app as an approver
+    sudo thessley-pam enroll --user NAME --link
+
+    # then, here, with the link it printed
+    thessley-passkey enroll 'thessleypam://enroll?...' --protect tpm+pin+fido2
+
+Compare the 6-digit code shown here with the one on the computer, then type `yes` there. To approve a request:
+
+    # on the computer: print each approval request's link as text (sudo and ssh)
+    sudo thessley-pam show-link on
+
+    thessley-passkey respond 'thessleypam://sudo?...' --approve        # or --deny
+
+Or paste the link into the window ("Paste a link"), or just open it: `thessleypam://` links open this app the same
+way `thessleypasskey://` links do. Computers are listed with the sites, under the computer's name. Removing one here
+also needs `sudo thessley-pam remove ID --user NAME` on the computer.
+
+What is different from a website: no server is involved; the app talks straight to the computer on your local network and
+trusts only the certificate named in the link; links are accepted only for private (LAN) addresses.
+Tests: `tests/test_pamlink.py` (no computer needed), `tests/integration_pam.py` (against the real thessley-pam code, expects
+`../thessley-pam-linux`).
+
 ## Terminal mode
 ```
 thessley-passkey list

@@ -90,6 +90,9 @@ class Device:
     locked_until: int = 0
     attestation_note: str = ""                 # why the site could not verify the TPM (empty when verified or not a TPM key)
     last_used: int = 0                         # when this device last unlocked its key for an approval (0 = never)
+    kind: str = "site"                         # "site" (a Thessley website) or "computer" (a Linux computer with thessley-pam)
+    machine_id: str = ""                       # computers only: the stable id the computer gave in its link
+    hostname: str = ""                         # computers only: its name, for display
 
     @property
     def uses_pin(self) -> bool:
@@ -102,6 +105,11 @@ class Device:
     @property
     def uses_tpm(self) -> bool:
         return self.protection.startswith("tpm")
+
+    @property
+    def title(self) -> str:
+        """What a list shows for it: the site address, or the computer's name."""
+        return self.hostname or self.origin if self.kind == "computer" else self.origin
 
     def aad(self) -> bytes:
         return f"{self.id}|{self.origin}".encode("utf-8")

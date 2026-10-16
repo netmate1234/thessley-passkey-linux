@@ -1,4 +1,5 @@
-"""Windows integration: make `thessleypasskey://` links open this app (per user, no admin needed)."""
+"""Windows integration: make `thessleypasskey://` (websites) and `thessleypam://` (Linux computers) links open this app
+(per user, no admin needed)."""
 
 from __future__ import annotations
 
@@ -6,6 +7,7 @@ import os
 import sys
 
 PROTOCOL = "thessleypasskey"
+PROTOCOLS = ("thessleypasskey", "thessleypam")
 KEY = rf"Software\Classes\{PROTOCOL}"
 
 
@@ -25,22 +27,25 @@ def register(winreg=None) -> str:
     if winreg is None:
         import winreg  # type: ignore[no-redef]
     command = launch_command()
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, KEY) as k:
-        winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "URL:Thessley Passkey")
-        winreg.SetValueEx(k, "URL Protocol", 0, winreg.REG_SZ, "")
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, KEY + r"\shell\open\command") as k:
-        winreg.SetValueEx(k, "", 0, winreg.REG_SZ, command)
+    for proto in PROTOCOLS:
+        key = rf"Software\Classes\{proto}"
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key) as k:
+            winreg.SetValueEx(k, "", 0, winreg.REG_SZ, "URL:Thessley Passkey")
+            winreg.SetValueEx(k, "URL Protocol", 0, winreg.REG_SZ, "")
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key + r"\shell\open\command") as k:
+            winreg.SetValueEx(k, "", 0, winreg.REG_SZ, command)
     return command
 
 
 def unregister(winreg=None) -> None:
     if winreg is None:
         import winreg  # type: ignore[no-redef]
-    for sub in (r"\shell\open\command", r"\shell\open", r"\shell", ""):
-        try:
-            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, KEY + sub)
-        except FileNotFoundError:
-            pass
+    for proto in PROTOCOLS:
+        for sub in (r"\shell\open\command", r"\shell\open", r"\shell", ""):
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, rf"Software\Classes\{proto}" + sub)
+            except FileNotFoundError:
+                pass
 
 
 def registered_command(winreg=None) -> str | None:

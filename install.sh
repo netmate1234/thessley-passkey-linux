@@ -28,5 +28,6 @@ command -v desktop-file-validate >/dev/null && desktop-file-validate "$data/appl
 command -v update-desktop-database >/dev/null && update-desktop-database "$data/applications" || true
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$data/icons/hicolor" 2>/dev/null || true
 xdg-mime default thessley-passkey.desktop x-scheme-handler/thessleypasskey
-echo "Installed. Links starting with thessleypasskey:// now open Thessley Passkey."
+xdg-mime default thessley-passkey.desktop x-scheme-handler/thessleypam
+echo "Installed. Links starting with thessleypasskey:// (websites) or thessleypam:// (Linux computers) now open Thessley Passkey."
 echo "Security keys: if yours is not detected, your user needs access to /dev/hidraw* (see README)."

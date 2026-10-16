@@ -67,6 +67,35 @@ class AuthRequest:
     username: str = "" # display only / device hint
     raw: str = field(default="", compare=False)  # the link as received, to reopen the app on it
 
+    # What the screens call things (pamlink.PamRequest has the same names, so one screen serves both).
+    @property
+    def display(self) -> str:
+        return self.origin
+
+    @property
+    def kind_label(self) -> str:
+        return "Site"
+
+    @property
+    def heading(self) -> str:
+        return "Log in" if self.type == "login" else "Confirm your login"
+
+    @property
+    def what(self) -> str:
+        return {"login": "Log in without a password", "2fa": "Confirm your login (second step after your password)"}.get(self.type, "")
+
+    @property
+    def enroll_title(self) -> str:
+        return "Add this computer"
+
+    @property
+    def enroll_hint(self) -> str:
+        return "Only continue if you just pressed “Add a device” on this site yourself."
+
+    @property
+    def enroll_button(self) -> str:
+        return "Add this computer"
+
 
 def parse(raw: str) -> AuthRequest | None:
     """Parse a thessleypasskey://auth?... link; None if it is not a well-formed one."""
@@ -94,3 +123,11 @@ def parse(raw: str) -> AuthRequest | None:
     fields = {"type": rtype, "id": rid, "nonce": nonce, "origin": origin, "ip": ip, "country": country, "username": username}
     raw = "thessleypasskey://auth?" + urlencode({k: v for k, v in fields.items() if v})
     return AuthRequest(type=rtype, request_id=rid, nonce=nonce, origin=origin, ip=ip, country=country, username=username, raw=raw)
+
+
+def parse_any(raw: str):
+    """A thessleypasskey:// link (a website) or a thessleypam:// link (a Linux computer); None for anything else."""
+    from . import pamlink
+    if isinstance(raw, str) and raw.lstrip().startswith("thessleypam:"):
+        return pamlink.parse(raw)
+    return parse(raw)

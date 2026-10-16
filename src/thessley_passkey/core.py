@@ -10,9 +10,10 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from . import protectors, protocol, tpm as tpm_mod, vault
+from . import pamlink, protectors, protocol, tpm as tpm_mod, vault
 from .interaction import Interaction
 from .link import AuthRequest, clean_text
+from .pamlink import PamError, PamRequest, PinnedClient
 from .protocol import NetworkError, ServerError
 from .vault import Device, Locked, Vault
 
@@ -47,9 +48,11 @@ class Service:
 
     # ---- lookup ---------------------------------------------------------------
 
-    def candidates(self, req: AuthRequest) -> list[Device]:
-        """Devices enrolled for this request's site, narrowed to the named account if there is one."""
+    def candidates(self, req) -> list[Device]:
+        """Devices enrolled for this request's site (or computer), narrowed to the named account if there is one."""
         devices = self.vault.for_origin(req.origin)
+        if isinstance(req, PamRequest):  # a computer: the account named in the request, nobody else's
+            return [d for d in devices if d.kind == "computer" and d.username == req.username]
         if req.username:
             named = [d for d in devices if d.username and d.username.casefold() == req.username.casefold()]
             if named:
@@ -120,7 +123,9 @@ class Service:
             return None
 
 
-    def enroll(self, req: AuthRequest, label: str, protection: str, interaction: Interaction) -> Device:
+    def enroll(self, req, label: str, protection: str, interaction: Interaction) -> Device:
+        if isinstance(req, PamRequest):
+            return self.enroll_computer(req, label, protection, interaction)
         if req.type != "enroll":
             raise ValueError("This is not an enrolment request.")
         if protection not in protectors.PROTECTIONS:
@@ -178,7 +183,9 @@ class Service:
 
     # ---- approve / deny ----------------------------------------------------------------
 
-    def respond(self, req: AuthRequest, device: Device, approve: bool, interaction: Interaction) -> str:
+    def respond(self, req, device: Device, approve: bool, interaction: Interaction) -> str:
+        if isinstance(req, PamRequest):
+            return self.respond_computer(req, device, approve, interaction)
         if req.type not in ("login", "2fa"):
             raise ValueError("This is not a login request.")
         if device.origin != req.origin:
@@ -188,4 +195,84 @@ class Service:
         ts = protocol.now()
         signature = protocol.b64(sign(protocol.canonical_string(req.type, req.request_id, req.origin, req.nonce, ts, action)))
         self.client_factory(req.origin).login_respond(req.request_id, device.credential_id, action, ts, signature)
+        return "approved" if approve else "denied"
+
+
+    # ---- Linux computers (thessley-pam) ---------------------------------------------------------------------------
+
+    def enroll_computer(self, req: PamRequest, label: str, protection: str, interaction: Interaction) -> Device:
+        """Make this app an approver for one account on a Linux computer (like adding a phone there).
+
+        The key is made and protected as for a site. The computer checks the proof of possession, then waits for its
+        user to compare a 6-digit code with this screen and type yes, so the code is shown before the request is sent.
+        """
+        if req.type != "enroll":
+            raise ValueError("This is not an enrolment request.")
+        if protection not in protectors.PROTECTIONS:
+            raise ValueError("Choose how to protect the key.")
+        label = clean_text(label, 64) or default_label()
+        label = "".join(c for c in label if c.isalnum() or c in " .,'()+-") or "Linux computer"  # thessley-pam's label rule
+
+        pin_part = fido_part = None
+        kdf, fido = {}, {}
+        if "pin" in protection:
+            pin = interaction.get_pin("Choose a PIN", confirm=True)
+            protectors.check_pin_strength(pin)
+            kdf = vault.pin_params()
+            pin_part = vault.pin_key(pin, kdf)
+        if "fido2" in protection:
+            fido, fido_part = self.fido2.fido2_create(interaction)
+
+        device_id = vault.new_device_id()
+        self.last_note = ""
+        tpm_blobs, wrapped = {}, {}
+        if protection.startswith("tpm"):
+            kek = vault.derive_kek(pin_part, fido_part)
+            tpm_blobs = self.tpm.create_key(kek)
+            public_key = protocol.b64(self.tpm.spki_from_public(base64.b64decode(tpm_blobs["public"])))
+            sign_proof = lambda msg: protocol.b64(self.tpm.sign(tpm_blobs, kek, msg))
+        else:
+            key = ec.generate_private_key(ec.SECP256R1())
+            der = key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+            probe = Device(id=device_id, origin=req.origin, credential_id="", username="", label=label, enrolled_at=0,
+                           public_key="", protection=protection, wrapped={}, kdf=kdf, fido2=fido)
+            wrapped = vault.wrap(der, vault.derive_kek(pin_part, fido_part), probe.aad())
+            public_key = _public_key_b64(key)
+            sign_proof = lambda msg: _sign(key, msg)
+
+        ts = protocol.now()
+        proof = sign_proof(pamlink.canonical("enroll", req.request_id, req.machine_id, req.username, req.nonce, ts, "register"))
+        interaction.notify(f"On {req.hostname}, check that it shows the code {pamlink.pairing_code(public_key)}, then type yes there.")
+        status, answer = PinnedClient(req).post(
+            f"/thessley-pam/v1/enroll/{req.request_id}/respond",
+            {"public_key": public_key, "proof_signature": proof, "timestamp": ts, "label": label, "attestation_chain": []},
+            timeout=140)  # the computer holds the request until its user types yes
+        interaction.clear_notice()
+        if status != 200 or answer.get("result") != "ok":
+            raise PamError(str(answer.get("message") or "The computer did not add this app."))
+
+        device = Device(
+            id=device_id, origin=req.origin, credential_id=str(answer["credential_id"]),
+            username=clean_text(answer.get("username"), 100) or req.username, label=label, enrolled_at=int(time.time()),
+            public_key=public_key, protection=protection, wrapped=wrapped, kdf=kdf, fido2=fido, tpm=tpm_blobs,
+            kind="computer", machine_id=req.machine_id, hostname=clean_text(answer.get("hostname"), 64) or req.hostname,
+        )
+        self.vault.add(device)
+        return device
+
+    def respond_computer(self, req: PamRequest, device: Device, approve: bool, interaction: Interaction) -> str:
+        """Approve or deny a sudo or login request from a Linux computer."""
+        if req.type not in ("sudo", "login"):
+            raise ValueError("This is not a login or sudo request.")
+        if device.kind != "computer" or device.machine_id != req.machine_id or device.username != req.username:
+            raise UnknownSite(f"This app is not enrolled for {req.username} on {req.hostname}.")
+        sign = self._signer(device, interaction)
+        action = "approve" if approve else "deny"
+        ts = protocol.now()
+        signature = protocol.b64(sign(pamlink.canonical(req.type, req.request_id, req.machine_id, req.username, req.nonce, ts, action)))
+        status, answer = PinnedClient(req).post(
+            f"/thessley-pam/v1/{req.type}/{req.request_id}/respond",
+            {"credential_id": device.credential_id, "action": action, "timestamp": ts, "signature": signature})
+        if status != 200 or answer.get("result") != "ok":
+            raise PamError(str(answer.get("message") or "The computer refused this answer."))
         return "approved" if approve else "denied"

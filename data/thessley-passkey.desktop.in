@@ -8,5 +8,5 @@ Icon=thessley-passkey
 Terminal=false
 Categories=System;Security;
 Keywords=passkey;login;2fa;thessley;
-MimeType=x-scheme-handler/thessleypasskey;
+MimeType=x-scheme-handler/thessleypasskey;x-scheme-handler/thessleypam;
 StartupNotify=true

@@ -199,7 +199,7 @@ class Window(Adw.ApplicationWindow):
         if not devices:
             group.add(_plain_row("Nothing enrolled yet", "On a site's profile page choose Add a device, then press “Open on this device”."))
         for d in devices:
-            row = _plain_row(d.origin, device_summary(d))
+            row = _plain_row(d.title, device_summary(d))
             info = Gtk.Button(icon_name="dialog-information-symbolic", valign=Gtk.Align.CENTER)
             info.add_css_class("flat")
             info.set_tooltip_text("Details: TPM version, protection, key")
@@ -214,7 +214,7 @@ class Window(Adw.ApplicationWindow):
         col.append(group)
 
         paste = Adw.PreferencesGroup(title="Paste a link")
-        entry = Adw.EntryRow(title="thessleypasskey://…")
+        entry = Adw.EntryRow(title="thessleypasskey://… or thessleypam://…")
         entry.set_show_apply_button(True)
         entry.connect("apply", self._open_pasted)
         paste.add(entry)
@@ -223,15 +223,15 @@ class Window(Adw.ApplicationWindow):
         self._page("home", col)
 
     def _open_pasted(self, entry) -> None:
-        req = link.parse(entry.get_text())
+        req = link.parse_any(entry.get_text())
         if req is None:
-            self.toasts.add_toast(Adw.Toast(title="That is not a valid Thessley Passkey link."))
+            self.toasts.add_toast(Adw.Toast(title="That is not a valid Thessley link."))
             return
         self.request = req
         (self.show_enroll if req.type == "enroll" else self.show_approve)(req)
 
     def _show_details(self, _btn, device: Device) -> None:
-        dialog = Adw.Dialog(title=f"{device.label} on {device.origin}", content_width=560, content_height=640)
+        dialog = Adw.Dialog(title=f"{device.label} on {device.title}", content_width=560, content_height=640)
         page = Adw.PreferencesPage()
         for title, rows in device_details(device):
             group = Adw.PreferencesGroup(title=title)
@@ -251,7 +251,7 @@ class Window(Adw.ApplicationWindow):
 
     def _confirm_remove(self, _btn, device: Device) -> None:
         dialog = Adw.AlertDialog(heading="Remove this computer?")
-        dialog.set_body(f"{device.origin}\nYou will not be able to log in to this site from here until you enrol again. "
+        dialog.set_body(f"{device.title}\nYou will not be able to log in to this " + ("computer" if device.kind == "computer" else "site") + " from here until you enrol again. "
                         "Also revoke it on the site's profile page.")
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("remove", "Remove")
@@ -267,10 +267,10 @@ class Window(Adw.ApplicationWindow):
 
     def show_enroll(self, req: link.AuthRequest) -> None:
         col = self._column()
-        col.append(_label("Add this computer", ["title-1"]))
-        col.append(_label("Only continue if you just pressed “Add a device” on this site yourself.", ["dim-label"]))
+        col.append(_label(req.enroll_title, ["title-1"]))
+        col.append(_label(req.enroll_hint, ["dim-label"]))
         group = Adw.PreferencesGroup()
-        group.add(_plain_row("Site", req.origin))
+        group.add(_plain_row(req.kind_label, req.display))
         if req.ip:
             group.add(_plain_row("Requested from", f"{req.ip} {req.country}".strip()))
         col.append(group)
@@ -292,7 +292,7 @@ class Window(Adw.ApplicationWindow):
         error = _label("", ["error"])
         error.set_visible(False)
         col.append(error)
-        add = Gtk.Button(label="Add this computer")
+        add = Gtk.Button(label=req.enroll_button)
         add.add_css_class("suggested-action")
         add.add_css_class("pill")
         cancel = Gtk.Button(label="Cancel")
@@ -311,7 +311,7 @@ class Window(Adw.ApplicationWindow):
             def work():
                 try:
                     device = self.service.enroll(req, label, protection, ui)
-                    GLib.idle_add(self.show_result, True, enrolled_text(device, req.origin, protection, self.service.last_note))
+                    GLib.idle_add(self.show_result, True, enrolled_text(device, req.display, protection, self.service.last_note))
                 except Cancelled:
                     GLib.idle_add(self._back, [add, cancel, label_row, combo], error, "")
                 except Exception as exc:  # shown to the user, not swallowed
@@ -325,18 +325,20 @@ class Window(Adw.ApplicationWindow):
     def show_approve(self, req: link.AuthRequest) -> None:
         devices = self.service.candidates(req)
         col = self._column()
-        col.append(_label("Log in" if req.type == "login" else "Confirm your login", ["title-1"]))
+        col.append(_label(req.heading, ["title-1"]))
         group = Adw.PreferencesGroup()
-        group.add(_plain_row("Site", req.origin))
-        group.add(_plain_row("What this does", TYPE_TEXT[req.type]))
+        group.add(_plain_row(req.kind_label, req.display))
+        group.add(_plain_row("What this does", req.what))
         if req.username:
             group.add(_plain_row("Account", req.username))
         if req.ip:
             group.add(_plain_row("Requested from", f"{req.ip} {req.country}".strip()))
+        if getattr(req, "tty", ""):
+            group.add(_plain_row("Terminal", req.tty))
         col.append(group)
 
         if not devices:
-            col.append(_label(NOT_ENROLLED.format(origin=req.origin), ["error"]))
+            col.append(_label(NOT_ENROLLED.format(origin=req.display), ["error"]))
             close = Gtk.Button(label="Close")
             close.add_css_class("pill")
             close.connect("clicked", lambda *_: self.close())
@@ -430,11 +432,11 @@ class Application(Adw.Application):
 
     def do_command_line(self, cmdline):
         args = cmdline.get_arguments()[1:]
-        raw = next((a for a in args if a.startswith("thessleypasskey:")), None)
-        request = link.parse(raw) if raw else None
+        raw = next((a for a in args if a.startswith(("thessleypasskey:", "thessleypam:"))), None)
+        request = link.parse_any(raw) if raw else None
         if raw and request is None:
             window = Window(self, self.service, None, False)
-            window.toasts.add_toast(Adw.Toast(title="That link is not a valid Thessley Passkey link."))
+            window.toasts.add_toast(Adw.Toast(title="That is not a valid Thessley link."))
         else:
             window = Window(self, self.service, request, bool(raw))
         window.present()

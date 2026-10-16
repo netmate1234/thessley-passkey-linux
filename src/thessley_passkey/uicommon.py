@@ -15,6 +15,24 @@ from .vault import Locked
 LOGO_PATH = Path(__file__).with_name("logo.png")
 LOGO_SIZE = 48
 
+def result_text(req, outcome: str) -> str:
+    """What the result screen says after an approval or a refusal, for a site and for each kind of computer request.
+    (It used to say "go back to the browser" for everything, ssh logins included.)"""
+    approved = outcome == "approved"
+    kind = getattr(req, "kind", None)
+    host = getattr(req, "hostname", "") or "the computer"
+    if kind is None:  # a site
+        return "Approved. You can go back to the browser." if approved else "Denied. The login was refused."
+    if not approved:
+        return "Denied. Nothing was approved."
+    return {
+        "ssh": f"Approved. The ssh login to {host} continues.",
+        "sudo": f"Approved. The sudo command on {host} continues.",
+        "screen": f"Approved. {host} lets the login through.",
+        "device": f"Approved. The new phone or app can now be added on {host}.",
+    }.get(kind, "Approved.")
+
+
 PROTECTION_LABELS = {
     "pin": "PIN",
     "fido2": "Security key",

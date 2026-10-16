@@ -17,7 +17,7 @@ from . import __version__, elevate, link, pamlink, protectors, vault
 from .core import Service, default_label
 from .interaction import Cancelled, Interaction
 from .uicommon import (
-    ENROLL_EXPLANATION, LOGO_PATH, LOGO_SIZE, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, device_details, device_summary, enrolled_text, explain,
+    ENROLL_EXPLANATION, LOGO_PATH, LOGO_SIZE, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, result_text, device_details, device_summary, enrolled_text, explain,
 )
 
 STYLE = """
@@ -549,8 +549,7 @@ class Window(QtWidgets.QMainWindow):
                 def work():
                     try:
                         outcome = self.service.respond(req, device, approved, ui)
-                        self.bridge.finished.emit(True, "Approved. You can go back to the browser." if outcome == "approved"
-                                                  else "Denied. The login was refused.")
+                        self.bridge.finished.emit(True, result_text(req, outcome))
                     except Cancelled:
                         self.bridge.failed.emit("")
                     except Exception as exc:
@@ -570,10 +569,13 @@ class Window(QtWidgets.QMainWindow):
             text = _label(message, "notice")
             text.setAlignment(Qt.AlignCenter)
             col.addWidget(text)
-            done = _button("Close")
-            done.clicked.connect(self.close)
+            done = _button("Done")
+            done.clicked.connect(lambda: self.show_home())
             col.addWidget(done)
         self._page("result", build)
+        if success:
+            # Back to the main screen on its own, unless the person has moved on in the meantime (a new link opened).
+            QtCore.QTimer.singleShot(3000, lambda: self.show_home() if self.page_name() == "result" else None)
         if success and self.launched_with_link:
             QtCore.QTimer.singleShot(3000, self.close)
 

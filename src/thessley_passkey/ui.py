@@ -25,7 +25,7 @@ from .vault import Device, Locked  # noqa: E402
 
 APP_ID = "se.thessley.Passkey"
 from .uicommon import (  # noqa: E402
-    ENROLL_EXPLANATION, LOGO_PATH, LOGO_SIZE, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, device_details, device_summary, enrolled_text, explain,
+    ENROLL_EXPLANATION, LOGO_PATH, LOGO_SIZE, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, result_text, device_details, device_summary, enrolled_text, explain,
 )
 
 
@@ -402,8 +402,7 @@ class Window(Adw.ApplicationWindow):
             def work():
                 try:
                     outcome = self.service.respond(req, device, approved, ui)
-                    text = "Approved. You can go back to the browser." if outcome == "approved" else "Denied. The login was refused."
-                    GLib.idle_add(self.show_result, True, text)
+                    GLib.idle_add(self.show_result, True, result_text(req, outcome))
                 except Cancelled:
                     GLib.idle_add(self._back, widgets, error, "")
                 except Exception as exc:
@@ -434,14 +433,15 @@ class Window(Adw.ApplicationWindow):
         text.set_justify(Gtk.Justification.CENTER)
         text.set_xalign(0.5)
         col.append(text)
-        done = Gtk.Button(label="Close")
+        done = Gtk.Button(label="Done")
         done.add_css_class("pill")
         done.set_halign(Gtk.Align.CENTER)
-        done.connect("clicked", lambda *_: self.close())
+        done.connect("clicked", lambda *_: self.show_home())
         col.append(done)
         self._page("result", col)
-        if success and self.launched_with_link:
-            GLib.timeout_add_seconds(3, lambda: (self.close(), False)[1])
+        if success:
+            # Back to the main screen on its own, unless the person has moved on in the meantime (a new link opened).
+            GLib.timeout_add_seconds(3, lambda: (self.show_home() if self.stack.get_visible_child_name() == "result" else None, False)[1])
         return False
 
 

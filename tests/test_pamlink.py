@@ -76,6 +76,21 @@ class KindTest(unittest.TestCase):
         r = pamlink.parse(mklink("sudo", tty="/dev/pts/3"))
         self.assertEqual((r.kind, r.heading, r.terminal), ("sudo", "Approve sudo", "/dev/pts/3"))
 
+    def test_the_result_text_matches_what_was_approved(self):
+        from thessley_passkey.uicommon import result_text
+        ssh = pamlink.parse(mklink("sudo", s="sshd", r="192.168.1.111"))
+        self.assertEqual(result_text(ssh, "approved"), "Approved. The ssh login to orangepi5 continues.")
+        self.assertEqual(result_text(pamlink.parse(mklink("sudo", tty="/dev/pts/3", s="sudo")), "approved"),
+                         "Approved. The sudo command on orangepi5 continues.")
+        self.assertIn("lets the login through", result_text(pamlink.parse(mklink("login", tty="-", s="gdm-thessley")), "approved"))
+        self.assertIn("new phone or app", result_text(pamlink.parse(mklink("sudo", tty="-", s="thessley-enroll")), "approved"))
+        self.assertEqual(result_text(ssh, "denied"), "Denied. Nothing was approved.")
+        for r in (ssh, pamlink.parse(mklink("sudo", tty="-", s="thessley-enroll"))):
+            self.assertNotIn("browser", result_text(r, "approved"))
+        site = link.parse_any("thessleypasskey://auth?type=2fa&id=" + "A" * 20 + "&nonce=" + "B" * 20 + "&origin=https%3A%2F%2Fsite.example")
+        self.assertEqual(result_text(site, "approved"), "Approved. You can go back to the browser.")  # sites keep it
+        self.assertEqual(result_text(site, "denied"), "Denied. The login was refused.")
+
     def test_adding_a_device(self):
         r = pamlink.parse(mklink("sudo", tty="-", s="thessley-enroll"))
         self.assertEqual((r.kind, r.heading, r.terminal), ("device", "Approve adding a device", ""))

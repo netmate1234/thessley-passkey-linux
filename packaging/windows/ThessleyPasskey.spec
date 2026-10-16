@@ -10,8 +10,9 @@ hidden = ["fido2", "fido2.client", "fido2.client.windows", "fido2.hid", "asn1cry
           "thessley_passkey.ui_qt", "thessley_passkey.winsetup", "thessley_passkey.diagnose"]
 excludes = ["gi", "tkinter", "tpm2_pytss", "PySide6.QtWebEngineCore", "PySide6.QtQml", "PySide6.QtQuick"]
 
+logo = os.path.join(root, "src", "thessley_passkey", "logo.png")
 a = Analysis([os.path.join(root, "packaging", "windows", "launcher.py")], pathex=[os.path.join(root, "src")],
-             hiddenimports=hidden, excludes=excludes, noarchive=False)
+             datas=[(logo, "thessley_passkey")], hiddenimports=hidden, excludes=excludes, noarchive=False)
 pyz = PYZ(a.pure)
 gui = EXE(pyz, a.scripts, [], exclude_binaries=True, name="ThessleyPasskey", console=False, icon=icon)
 cli = EXE(pyz, a.scripts, [], exclude_binaries=True, name="thessley-passkey-cli", console=True, icon=icon)

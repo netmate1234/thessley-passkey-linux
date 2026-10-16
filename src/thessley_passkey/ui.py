@@ -14,7 +14,8 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, Gtk  # noqa: E402
 
 from . import __version__, link, protectors, protocol, tpm, vault  # noqa: E402
 from .core import Service, UnknownSite, WrongSecret, default_label  # noqa: E402
@@ -24,7 +25,7 @@ from .vault import Device, Locked  # noqa: E402
 
 APP_ID = "se.thessley.Passkey"
 from .uicommon import (  # noqa: E402
-    ENROLL_EXPLANATION, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, device_details, device_summary, enrolled_text, explain,
+    ENROLL_EXPLANATION, LOGO_PATH, LOGO_SIZE, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, device_details, device_summary, enrolled_text, explain,
 )
 
 
@@ -191,9 +192,23 @@ class Window(Adw.ApplicationWindow):
 
     def show_home(self) -> None:
         col = self._column()
-        col.append(_label("Thessley Passkey", ["title-1"]))
-        col.append(_label("Approve logins to your Thessley-protected sites and Linux computers from this computer. "
-                          "Open a site's “Open on this device” link, or paste a computer's link, to enrol or approve.", ["dim-label"]))
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        words = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, hexpand=True)
+        words.append(_label("Thessley Passkey", ["title-1"]))
+        words.append(_label("Approve logins to your Thessley-protected sites and Linux computers from this computer. "
+                            "Open a site's “Open on this device” link, or paste a computer's link, to enrol or approve.", ["dim-label"]))
+        header.append(words)
+        if LOGO_PATH.is_file():
+            try:  # scaled to a fixed size here: a Gtk.Picture would show the file's own 256 pixels
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(LOGO_PATH), LOGO_SIZE, LOGO_SIZE, True)
+                logo = Gtk.Image.new_from_paintable(Gdk.Texture.new_for_pixbuf(pixbuf))
+                logo.set_pixel_size(LOGO_SIZE)
+                logo.set_halign(Gtk.Align.END)
+                logo.set_valign(Gtk.Align.START)
+                header.append(logo)
+            except GLib.Error:
+                pass  # no logo is better than no window
+        col.append(header)
         devices = vault.sort_devices(self.service.vault.all())
         sites = [d for d in devices if d.kind != "computer"]
         computers = [d for d in devices if d.kind == "computer"]

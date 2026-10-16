@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from . import protectors, protocol, tpm
 from .core import UnknownSite, WrongSecret
 from .pamlink import PamError
 from .protocol import NetworkError, ServerError
 from .vault import Locked
+
+# The logo shown in the top right corner of the main window. It lives inside the package, so install.sh and the
+# Windows build carry it along; a missing file just means no logo.
+LOGO_PATH = Path(__file__).with_name("logo.png")
+LOGO_SIZE = 48
 
 PROTECTION_LABELS = {
     "pin": "PIN",

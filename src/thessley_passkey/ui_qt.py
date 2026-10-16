@@ -17,7 +17,7 @@ from . import __version__, elevate, link, protectors, vault
 from .core import Service, default_label
 from .interaction import Cancelled, Interaction
 from .uicommon import (
-    ENROLL_EXPLANATION, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, device_details, device_summary, enrolled_text, explain,
+    ENROLL_EXPLANATION, LOGO_PATH, LOGO_SIZE, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, device_details, device_summary, enrolled_text, explain,
 )
 
 STYLE = """
@@ -325,9 +325,22 @@ class Window(QtWidgets.QMainWindow):
 
     def show_home(self, toast: str = "") -> None:
         def build(col):
-            col.addWidget(_label("Thessley Passkey", "title"))
-            col.addWidget(_label("Approve logins to your Thessley-protected sites and Linux computers from this computer. "
-                                 "Open a site's “Open on this device” link, or paste a computer's link, to enrol or approve.", "dim"))
+            header = QtWidgets.QHBoxLayout()
+            words = QtWidgets.QVBoxLayout()
+            words.addWidget(_label("Thessley Passkey", "title"))
+            words.addWidget(_label("Approve logins to your Thessley-protected sites and Linux computers from this computer. "
+                                   "Open a site's “Open on this device” link, or paste a computer's link, to enrol or approve.", "dim"))
+            header.addLayout(words, 1)
+            pix = QtGui.QPixmap(str(LOGO_PATH)) if LOGO_PATH.is_file() else QtGui.QPixmap()
+            if not pix.isNull():
+                ratio = self.devicePixelRatioF()
+                pix = pix.scaled(int(LOGO_SIZE * ratio), int(LOGO_SIZE * ratio), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                pix.setDevicePixelRatio(ratio)
+                logo = QtWidgets.QLabel()
+                logo.setPixmap(pix)
+                logo.setAccessibleName("Thessley Passkey logo")
+                header.addWidget(logo, 0, Qt.AlignTop | Qt.AlignRight)
+            col.addLayout(header)
             if toast:
                 col.addWidget(_label(toast, "error"))
             devices = vault.sort_devices(self.service.vault.all())

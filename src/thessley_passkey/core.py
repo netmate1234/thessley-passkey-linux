@@ -190,8 +190,12 @@ class Service:
             raise ValueError("This is not a login request.")
         if device.origin != req.origin:
             raise UnknownSite(f"This computer is not enrolled with {req.origin}.")
+        if not approve:
+            # Saying no proves nothing, so it asks for no PIN and unlocks no key. The site wants a signed answer for
+            # either choice, so nothing is sent: the request is left to expire, and nothing is approved.
+            return "denied"
         sign = self._signer(device, interaction)
-        action = "approve" if approve else "deny"
+        action = "approve"
         ts = protocol.now()
         signature = protocol.b64(sign(protocol.canonical_string(req.type, req.request_id, req.origin, req.nonce, ts, action)))
         self.client_factory(req.origin).login_respond(req.request_id, device.credential_id, action, ts, signature)
@@ -266,8 +270,19 @@ class Service:
             raise ValueError("This is not a login or sudo request.")
         if device.kind != "computer" or device.machine_id != req.machine_id or device.username != req.username:
             raise UnknownSite(f"This app is not enrolled for {req.username} on {req.hostname}.")
+        if not approve:
+            # No PIN, no key: a refusal grants nothing, so the request's own nonce (only whoever saw the link has it)
+            # stands in for the signature. An older computer that insists on a signature, or one out of reach, does not
+            # matter: nothing was approved and the request expires on its own.
+            try:
+                PinnedClient(req).post(
+                    f"/thessley-pam/v1/{req.type}/{req.request_id}/respond",
+                    {"credential_id": device.credential_id, "action": "deny", "timestamp": protocol.now(), "nonce": req.nonce})
+            except PamError:
+                pass
+            return "denied"
         sign = self._signer(device, interaction)
-        action = "approve" if approve else "deny"
+        action = "approve"
         ts = protocol.now()
         signature = protocol.b64(sign(pamlink.canonical(req.type, req.request_id, req.machine_id, req.username, req.nonce, ts, action)))
         status, answer = PinnedClient(req).post(
@@ -275,4 +290,4 @@ class Service:
             {"credential_id": device.credential_id, "action": action, "timestamp": ts, "signature": signature})
         if status != 200 or answer.get("result") != "ok":
             raise PamError(str(answer.get("message") or "The computer refused this answer."))
-        return "approved" if approve else "denied"
+        return "approved"

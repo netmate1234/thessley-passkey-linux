@@ -468,10 +468,13 @@ class ServiceTests(unittest.TestCase):
         self.assertNotIn("123456", text)
         self.assertIn(dev.wrapped["ct"], text)
 
-    def test_deny_is_signed_too(self):
+    def test_deny_needs_no_pin_and_sends_nothing_to_a_site(self):
+        """The site wants a signed answer for either choice, so a refusal is left to expire (no PIN, nothing sent)."""
         dev = self.enroll("pin", ["123456"])
-        self.assertEqual(self.svc.respond(self.login_req("D" * 43), dev, False, ScriptedUI(["123456"])), "denied")
-        self.assertEqual(self.server.calls[-1][1], "deny")
+        before = len(self.server.calls)
+        ui = ScriptedUI([])  # any PIN prompt would raise: there is none to give
+        self.assertEqual(self.svc.respond(self.login_req("D" * 43), dev, False, ui), "denied")
+        self.assertEqual(len(self.server.calls), before)
 
     def test_2fa_type_is_signed(self):
         dev = self.enroll("pin", ["123456"])

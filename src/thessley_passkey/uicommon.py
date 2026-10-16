@@ -22,7 +22,8 @@ def result_text(req, outcome: str) -> str:
     kind = getattr(req, "kind", None)
     host = getattr(req, "hostname", "") or "the computer"
     if kind is None:  # a site
-        return "Approved. You can go back to the browser." if approved else "Denied. The login was refused."
+        return ("Approved. You can go back to the browser." if approved
+                else "Not approved. The login request on the site will expire on its own.")
     if not approved:
         return "Denied. Nothing was approved."
     return {

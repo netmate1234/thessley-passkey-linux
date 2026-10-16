@@ -89,7 +89,7 @@ class KindTest(unittest.TestCase):
             self.assertNotIn("browser", result_text(r, "approved"))
         site = link.parse_any("thessleypasskey://auth?type=2fa&id=" + "A" * 20 + "&nonce=" + "B" * 20 + "&origin=https%3A%2F%2Fsite.example")
         self.assertEqual(result_text(site, "approved"), "Approved. You can go back to the browser.")  # sites keep it
-        self.assertEqual(result_text(site, "denied"), "Denied. The login was refused.")
+        self.assertIn("Not approved", result_text(site, "denied"))
 
     def test_adding_a_device(self):
         r = pamlink.parse(mklink("sudo", tty="-", s="thessley-enroll"))
@@ -317,23 +317,44 @@ class CoreFlowTest(unittest.TestCase):
             self.enrol()
         self.assertEqual(self.vault.all(), [])
 
-    def test_approve_and_deny_sign_the_right_thing(self):
+    def test_approve_signs_the_right_thing(self):
         d, _ = self.enrol()
         self.computer.calls.clear()
         for kind in ("sudo", "login"):
-            for approve in (True, False):
-                req = pamlink.parse(mklink(kind))
-                self.assertEqual(self.svc.candidates(req)[0].id, d.id)
-                out = self.svc.respond(req, d, approve, Pin("246810"))
-                self.assertEqual(out, "approved" if approve else "denied")
-                path, body = self.computer.calls[-1]
-                self.assertEqual(path, f"/thessley-pam/v1/{kind}/RequestId12345678/respond")
-                action = "approve" if approve else "deny"
-                self.assertEqual(body["action"], action)
-                self.assertEqual(body["credential_id"], "c_0123456789abcdef")
-                msg = pamlink.canonical(kind, "RequestId12345678", MID, "ubuntu", "NonceNonce12345678", body["timestamp"], action)
-                serialization.load_der_public_key(base64.b64decode(d.public_key)).verify(
-                    base64.b64decode(body["signature"]), msg, ec.ECDSA(hashes.SHA256()))
+            req = pamlink.parse(mklink(kind))
+            self.assertEqual(self.svc.candidates(req)[0].id, d.id)
+            self.assertEqual(self.svc.respond(req, d, True, Pin("246810")), "approved")
+            path, body = self.computer.calls[-1]
+            self.assertEqual(path, f"/thessley-pam/v1/{kind}/RequestId12345678/respond")
+            self.assertEqual((body["action"], body["credential_id"]), ("approve", "c_0123456789abcdef"))
+            msg = pamlink.canonical(kind, "RequestId12345678", MID, "ubuntu", "NonceNonce12345678", body["timestamp"], "approve")
+            serialization.load_der_public_key(base64.b64decode(d.public_key)).verify(
+                base64.b64decode(body["signature"]), msg, ec.ECDSA(hashes.SHA256()))
+
+    def test_deny_asks_for_no_pin_and_signs_nothing(self):
+        """Saying no proves nothing: no PIN, no key unlocked; the request's nonce stands in for the signature."""
+        d, _ = self.enrol()
+
+        class NoPin(Pin):
+            def get_pin(self, prompt, confirm=False):
+                raise AssertionError("a refusal must not ask for the PIN")
+
+            def fido_pin(self):
+                raise AssertionError("a refusal must not touch the security key")
+
+        for kind in ("sudo", "login"):
+            self.computer.calls.clear()
+            self.assertEqual(self.svc.respond(pamlink.parse(mklink(kind)), d, False, NoPin("")), "denied")
+            path, body = self.computer.calls[-1]
+            self.assertEqual(path, f"/thessley-pam/v1/{kind}/RequestId12345678/respond")
+            self.assertEqual((body["action"], body["credential_id"], body["nonce"]),
+                             ("deny", "c_0123456789abcdef", "NonceNonce12345678"))
+            self.assertNotIn("signature", body)
+
+    def test_deny_still_says_denied_when_the_computer_is_out_of_reach_or_old(self):
+        d, _ = self.enrol()
+        self.computer.answer = (400, {"result": "error", "message": "Missing fields."})  # an older computer
+        self.assertEqual(self.svc.respond(pamlink.parse(mklink("sudo")), d, False, Pin("0")), "denied")
 
     def test_wrong_pin_sends_nothing(self):
         d, _ = self.enrol()

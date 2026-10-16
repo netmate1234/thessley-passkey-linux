@@ -326,30 +326,37 @@ class Window(QtWidgets.QMainWindow):
     def show_home(self, toast: str = "") -> None:
         def build(col):
             col.addWidget(_label("Thessley Passkey", "title"))
-            col.addWidget(_label("Approve logins to your Thessley-protected sites from this computer. "
-                                 "Open a site's “Open on this device” link to enrol or approve.", "dim"))
+            col.addWidget(_label("Approve logins to your Thessley-protected sites and Linux computers from this computer. "
+                                 "Open a site's “Open on this device” link, or paste a computer's link, to enrol or approve.", "dim"))
             if toast:
                 col.addWidget(_label(toast, "error"))
-            col.addWidget(_label("Enrolled sites", "notice"))
             devices = vault.sort_devices(self.service.vault.all())
-            if not devices:
-                col.addWidget(_rows([("Nothing enrolled yet", "On a site's profile page choose Add a device, then press “Open on this device”.")]))
-            for d in devices:
-                card = QtWidgets.QFrame()
-                card.setProperty("card", "true")
-                row = QtWidgets.QHBoxLayout(card)
-                row.setContentsMargins(14, 10, 10, 10)
-                text = QtWidgets.QVBoxLayout()
-                text.addWidget(_label(d.title))
-                text.addWidget(_label(device_summary(d), "caption"))
-                row.addLayout(text, 1)
-                more = _icon_button("info", "Details: TPM version, protection, key", self.palette().color(QtGui.QPalette.ButtonText))
-                more.clicked.connect(lambda _=False, dev=d: self._show_details(dev))
-                row.addWidget(more)
-                rm = _icon_button("bin", "Remove from this computer", QtGui.QColor(QtWidgets.QApplication.instance().property("thessley_error_color") or "#c01c28"))
-                rm.clicked.connect(lambda _=False, dev=d: self._confirm_remove(dev))
-                row.addWidget(rm)
-                col.addWidget(card)
+            sections = (
+                ("Enrolled sites", [d for d in devices if d.kind != "computer"],
+                 ("Nothing enrolled yet", "On a site's profile page choose Add a device, then press “Open on this device”.")),
+                ("Enrolled computers", [d for d in devices if d.kind == "computer"],
+                 ("No computers yet", "On a Linux computer with thessley-pam run “thessley-pam enroll --user NAME --link”.")),
+            )
+            for title, items, empty in sections:
+                col.addWidget(_label(title, "notice"))
+                if not items:
+                    col.addWidget(_rows([empty]))
+                for d in items:
+                    card = QtWidgets.QFrame()
+                    card.setProperty("card", "true")
+                    row = QtWidgets.QHBoxLayout(card)
+                    row.setContentsMargins(14, 10, 10, 10)
+                    text = QtWidgets.QVBoxLayout()
+                    text.addWidget(_label(d.title))
+                    text.addWidget(_label(device_summary(d), "caption"))
+                    row.addLayout(text, 1)
+                    more = _icon_button("info", "Details: TPM version, protection, key", self.palette().color(QtGui.QPalette.ButtonText))
+                    more.clicked.connect(lambda _=False, dev=d: self._show_details(dev))
+                    row.addWidget(more)
+                    rm = _icon_button("bin", "Remove from this computer", QtGui.QColor(QtWidgets.QApplication.instance().property("thessley_error_color") or "#c01c28"))
+                    rm.clicked.connect(lambda _=False, dev=d: self._confirm_remove(dev))
+                    row.addWidget(rm)
+                    col.addWidget(card)
             col.addWidget(_label("Paste a link", "notice"))
             paste = QtWidgets.QLineEdit()
             paste.setPlaceholderText("thessleypasskey://… or thessleypam://…")

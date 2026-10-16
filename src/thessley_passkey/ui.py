@@ -192,26 +192,32 @@ class Window(Adw.ApplicationWindow):
     def show_home(self) -> None:
         col = self._column()
         col.append(_label("Thessley Passkey", ["title-1"]))
-        col.append(_label("Approve logins to your Thessley-protected sites from this computer. "
-                          "Open a site's “Open on this device” link to enrol or approve.", ["dim-label"]))
+        col.append(_label("Approve logins to your Thessley-protected sites and Linux computers from this computer. "
+                          "Open a site's “Open on this device” link, or paste a computer's link, to enrol or approve.", ["dim-label"]))
         devices = vault.sort_devices(self.service.vault.all())
-        group = Adw.PreferencesGroup(title="Enrolled sites")
-        if not devices:
-            group.add(_plain_row("Nothing enrolled yet", "On a site's profile page choose Add a device, then press “Open on this device”."))
-        for d in devices:
-            row = _plain_row(d.title, device_summary(d))
-            info = Gtk.Button(icon_name="dialog-information-symbolic", valign=Gtk.Align.CENTER)
-            info.add_css_class("flat")
-            info.set_tooltip_text("Details: TPM version, protection, key")
-            info.connect("clicked", self._show_details, d)
-            row.add_suffix(info)
-            btn = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
-            btn.add_css_class("flat")
-            btn.set_tooltip_text("Remove from this computer")
-            btn.connect("clicked", self._confirm_remove, d)
-            row.add_suffix(btn)
-            group.add(row)
-        col.append(group)
+        sites = [d for d in devices if d.kind != "computer"]
+        computers = [d for d in devices if d.kind == "computer"]
+        for title, items, empty in (
+            ("Enrolled sites", sites, ("Nothing enrolled yet", "On a site's profile page choose Add a device, then press “Open on this device”.")),
+            ("Enrolled computers", computers, ("No computers yet", "On a Linux computer with thessley-pam run “thessley-pam enroll --user NAME --link”.")),
+        ):
+            group = Adw.PreferencesGroup(title=title)
+            if not items:
+                group.add(_plain_row(*empty))
+            for d in items:
+                row = _plain_row(d.title, device_summary(d))
+                info = Gtk.Button(icon_name="dialog-information-symbolic", valign=Gtk.Align.CENTER)
+                info.add_css_class("flat")
+                info.set_tooltip_text("Details: TPM version, protection, key")
+                info.connect("clicked", self._show_details, d)
+                row.add_suffix(info)
+                btn = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER)
+                btn.add_css_class("flat")
+                btn.set_tooltip_text("Remove from this computer")
+                btn.connect("clicked", self._confirm_remove, d)
+                row.add_suffix(btn)
+                group.add(row)
+            col.append(group)
 
         paste = Adw.PreferencesGroup(title="Paste a link")
         entry = Adw.EntryRow(title="thessleypasskey://… or thessleypam://…")

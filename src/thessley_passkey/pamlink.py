@@ -42,11 +42,12 @@ _CLIENT = re.compile(r"^[0-9A-Fa-f.:]{1,45}$")
 # The link says type "sudo" for every request that is not a screen login (ssh included), so what is really being
 # approved is told apart by the optional display-only fields: s (PAM service) and, for old computers, tty "ssh".
 HEADINGS = {"enroll": "Add this app as an approver", "sudo": "Approve sudo", "ssh": "Approve ssh login",
-            "screen": "Approve screen login"}
+            "screen": "Approve screen login", "device": "Approve adding a device"}
 WHAT = {
     "sudo": "Allow a sudo command on that computer",
     "ssh": "Let someone log in to that computer over ssh",
     "screen": "Log in at that computer's login or lock screen",
+    "device": "Let a new phone or app be added for this account on that computer",
 }
 
 
@@ -80,6 +81,8 @@ class PamRequest:
             return "enroll"
         if self.type == "login":
             return "screen"
+        if self.service == "thessley-enroll":
+            return "device"
         if self.service == "sshd" or (not self.service and self.tty == "ssh"):
             return "ssh"
         return "sudo"

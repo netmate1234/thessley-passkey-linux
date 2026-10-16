@@ -18,7 +18,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-os.environ.setdefault("THESSLEY_PASSKEY_DEV", "1")
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -29,6 +28,24 @@ from thessley_passkey import core, link, pamlink, vault
 from thessley_passkey.interaction import Interaction
 
 vault.SCRYPT_N = 2 ** 10
+_DEV_BEFORE = None
+
+
+def setUpModule():
+    """The pinned-client tests talk to 127.0.0.1, which the app accepts only in dev mode. Switch it on for this module's
+    tests only: set at import time it leaked into test_core's check that plain-http links are refused."""
+    global _DEV_BEFORE
+    _DEV_BEFORE = os.environ.get("THESSLEY_PASSKEY_DEV")
+    os.environ["THESSLEY_PASSKEY_DEV"] = "1"
+
+
+def tearDownModule():
+    if _DEV_BEFORE is None:
+        os.environ.pop("THESSLEY_PASSKEY_DEV", None)
+    else:
+        os.environ["THESSLEY_PASSKEY_DEV"] = _DEV_BEFORE
+
+
 MID = "ab" * 16
 FP = "cd" * 32
 

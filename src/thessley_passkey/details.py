@@ -114,11 +114,13 @@ def describe(device, chip: dict | str | None = None) -> Sections:
     sections.append(("Key", key))
 
     if device.uses_tpm:
+        judge = "computer's" if device.kind == "computer" else "site's"
+        who = "the computer" if device.kind == "computer" else "the site"
         if device.attestation == "tpm":
-            proof = "Verified by the site: the key lives in a genuine TPM 2.0 chip"
+            proof = f"Verified by {who}: the key lives in a genuine TPM 2.0 chip"
         else:
-            proof = "Not verified: " + (device.attestation_note or "the site could not verify the TPM")
-        sections.append(("Hardware proof", [("Site's verdict", proof)]))
+            proof = "Not verified: " + (device.attestation_note or f"{who} could not verify the TPM")
+        sections.append(("Hardware proof", [(f"{judge[0].upper() + judge[1:]} verdict", proof)]))
         sections.append(("TPM chip in this computer", _chip_rows(chip if chip is not None else "not read")))
     return sections
 

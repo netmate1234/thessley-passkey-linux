@@ -81,6 +81,13 @@ def explain(exc: Exception) -> str:
 
 
 def enrolled_text(device, origin: str, protection: str, note: str) -> str:
+    if device.kind == "computer":  # this app is now an approver for another computer's logins
+        text = f"This app can now approve logins for {device.username or 'your account'} on {origin}."
+        if device.attestation == "tpm":
+            text += " The computer verified that the key lives in a genuine TPM 2.0 chip here."
+        elif protection.startswith("tpm") and note:
+            text += " " + note
+        return text
     text = f"This computer is now enrolled for {device.username or 'your account'} on {origin}."
     if device.attestation == "tpm":
         text += " The site verified that the key lives in this computer's TPM chip."
@@ -90,8 +97,13 @@ def enrolled_text(device, origin: str, protection: str, note: str) -> str:
 
 
 def device_summary(device) -> str:
-    if device.kind == "computer":  # a Linux computer this app approves for: no site, no attestation to report
-        return f"{device.username or 'account'} · {device.label} · {PROTECTION_LABELS.get(device.protection, device.protection)}"
+    if device.kind == "computer":  # a computer this app approves for: its own verdict on the TPM, not a site's
+        proof = ""
+        if device.attestation == "tpm":
+            proof = " · TPM verified by the computer"
+        elif device.uses_tpm:
+            proof = " · TPM not verified: " + (device.attestation_note or "the computer could not verify it")
+        return f"{device.username or 'account'} · {device.label} · {PROTECTION_LABELS.get(device.protection, device.protection)}{proof}"
     if device.attestation == "tpm":
         proof = " · verified by the site"
     elif device.uses_tpm:

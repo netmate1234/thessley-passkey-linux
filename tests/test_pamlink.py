@@ -91,6 +91,19 @@ class KindTest(unittest.TestCase):
         self.assertEqual(result_text(site, "approved"), "Approved. You can go back to the browser.")  # sites keep it
         self.assertIn("Not approved", result_text(site, "denied"))
 
+    def test_a_computer_entry_speaks_of_the_computer_not_a_site(self):
+        from thessley_passkey import uicommon, vault
+        d = vault.Device(id="x", origin="computer:" + MID, credential_id="c_1", username="ubuntu", label="n150", enrolled_at=1,
+                         public_key="k", protection="tpm+pin", wrapped={}, kdf={}, kind="computer", hostname="orangepi5", attestation="tpm")
+        text = uicommon.enrolled_text(d, "orangepi5 (192.168.1.200)", "tpm+pin", "")
+        self.assertIn("approve logins for ubuntu on orangepi5", text)
+        self.assertIn("The computer verified", text)
+        self.assertNotIn("site", text.lower())
+        self.assertIn("TPM verified by the computer", uicommon.device_summary(d))
+        d.attestation, d.attestation_note = "", "the TPM certificate chain is not one we trust"
+        self.assertIn("not one we trust", uicommon.device_summary(d))
+        self.assertNotIn("site", uicommon.device_summary(d).lower())
+
     def test_the_open_link_only_brings_the_app_up(self):
         for raw in ("thessleypam://open", "thessleypam://open/", " THESSLEYPAM://Open ", "thessleypam://open "):
             self.assertTrue(link.is_open_link(raw), raw)

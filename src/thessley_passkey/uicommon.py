@@ -28,6 +28,7 @@ def result_text(req, outcome: str) -> str:
         return "Denied. Nothing was approved."
     return {
         "ssh": f"Approved. The ssh login to {host} continues.",
+        "vpn": f"Approved. The VPN connection to {host} continues.",
         "sudo": f"Approved. The sudo command on {host} continues.",
         "screen": f"Approved. {host} lets the login through.",
         "device": f"Approved. The new phone or app can now be added on {host}.",
@@ -60,6 +61,15 @@ NOT_ENROLLED = (
     "If a web page or someone else asked you to scan or open this, do not continue: "
     "it may be an attempt to log in as you elsewhere."
 )
+
+
+def not_enrolled_text(req) -> str:
+    """Why this app cannot answer; a VPN request says how to enrol for it."""
+    text = NOT_ENROLLED.format(origin=req.display)
+    if getattr(req, "type", "") == "vpn":
+        text += (f"\n\nTo approve VPN logins to {req.hostname} from this app, run “sudo thessley-pam vpn enroll” on that "
+                 "computer, on its own network, and scan its code here.")
+    return text
 
 
 def available_protections() -> tuple[list[str], str]:

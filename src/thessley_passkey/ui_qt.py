@@ -17,7 +17,7 @@ from . import __version__, elevate, link, protectors, vault
 from .core import Service, default_label
 from .interaction import Cancelled, Interaction
 from .uicommon import (
-    ENROLL_EXPLANATION, LOGO_PATH, LOGO_SIZE, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, result_text, device_details, device_summary, enrolled_text, explain,
+    ENROLL_EXPLANATION, LOGO_PATH, LOGO_SIZE, NOT_ENROLLED, not_enrolled_text, PROTECTION_LABELS, TYPE_TEXT, available_protections, result_text, device_details, device_summary, enrolled_text, explain,
 )
 
 STYLE = """
@@ -515,7 +515,7 @@ class Window(QtWidgets.QMainWindow):
                 rows.append(("Terminal", req.terminal))
             col.addWidget(_rows(rows))
             if not devices:
-                col.addWidget(_label(NOT_ENROLLED.format(origin=req.display), "error"))
+                col.addWidget(_label(not_enrolled_text(req), "error"))
                 close = _button("Close")
                 close.clicked.connect(self.close)
                 col.addWidget(close)

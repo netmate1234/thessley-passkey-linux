@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 SIG_VERSION = "thessley_pam_v1"
-TYPES = ("enroll", "sudo", "login")
+TYPES = ("enroll", "sudo", "login", "vpn")
 ACTIONS = ("register", "approve", "deny")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
@@ -38,15 +38,19 @@ _TTY = re.compile(r"^[A-Za-z0-9/_.:-]{1,32}$")
 _FIELD = re.compile(r"^[^|\s]+$")
 _SERVICE = re.compile(r"^[a-z0-9_-]{1,32}$")
 _CLIENT = re.compile(r"^[0-9A-Fa-f.:]{1,45}$")
+# A VPN login comes from the internet, so its link names a public host. Not a private address: a name with at least one dot, or
+# a public IPv4 address. Whether this app trusts THAT host is decided from what it recorded at enrolment (core.Service).
+_NAME = re.compile(r"^(?=.{4,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$")
 
 # The link says type "sudo" for every request that is not a screen login (ssh included), so what is really being
 # approved is told apart by the optional display-only fields: s (PAM service) and, for old computers, tty "ssh".
-HEADINGS = {"enroll": "Add this app as an approver", "sudo": "Approve sudo", "ssh": "Approve ssh login",
+HEADINGS = {"enroll": "Add this app as an approver", "sudo": "Approve sudo", "ssh": "Approve ssh login", "vpn": "Approve VPN login",
             "screen": "Approve screen login", "device": "Approve adding a device",
             "web": "Approve the admin page sign-in", "webchange": "Approve a change to your keys"}
 WHAT = {
     "sudo": "Allow a sudo command on that computer",
     "ssh": "Let someone log in to that computer over ssh",
+    "vpn": "Let someone connect to that computer's VPN",
     "screen": "Log in at that computer's login or lock screen",
     "device": "Let a new phone or app be added for this account on that computer",
     "web": "Sign in to the Thessley admin page on that computer",
@@ -69,6 +73,7 @@ class PamRequest:
     service: str = ""  # display only: the PAM service (sudo, sshd, gdm-thessley); older computers do not send it
     client: str = ""   # display only: where an ssh login comes from
     raw: str = field(default="", compare=False)
+    vpn_host: str = ""  # enrolment links only: the public host this computer's VPN approvals will come from (recorded, then required)
 
     # What the screens call things. Shared names with link.AuthRequest, so one screen serves both.
     country = ""
@@ -76,7 +81,7 @@ class PamRequest:
     @property
     def ip(self) -> str:
         """"Requested from": the ssh client's address (nothing for sudo or the screen, which are at the computer)."""
-        return self.client if self.kind in ("ssh", "web") else ""
+        return self.client if self.kind in ("ssh", "web", "vpn") else ""
 
     @property
     def kind(self) -> str:
@@ -84,6 +89,8 @@ class PamRequest:
             return "enroll"
         if self.type == "login":
             return "screen"
+        if self.type == "vpn":
+            return "vpn"
         if self.service == "thessley-enroll" or self.tty == "add-device":  # Linux names the service, Windows the terminal
             return "device"
         if self.service == "thessley-web":
@@ -142,6 +149,15 @@ def is_private_ipv4(host: str) -> bool:
     return ip.version == 4 and (ip.is_private or ip.is_loopback) and not ip.is_multicast and not ip.is_unspecified
 
 
+def is_public_host(host: str) -> bool:
+    """A host name with a dot, or a globally routable IPv4 address: what a VPN approval may be reached at."""
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return bool(_NAME.match(host))
+    return ip.version == 4 and ip.is_global
+
+
 def parse(raw: str) -> PamRequest | None:
     """Parse a thessleypam://<type>?... link; None for anything that is not exactly what thessley-pam produces."""
     if not isinstance(raw, str) or len(raw) > 2048:
@@ -161,7 +177,13 @@ def parse(raw: str) -> PamRequest | None:
         return None
     rid, nonce, mid = q.get("id", ""), q.get("n", ""), q.get("m", "")
     hostname, user, tty = q.get("hn", ""), q.get("u", ""), q.get("tty", "")
-    if not is_private_ipv4(host) or not 1 <= port <= 65535 or not _HEX64.match(fp):
+    # Only a VPN request may name a public host (and then only one this app was enrolled for: checked where it is used);
+    # every other request still has to be on the local network.
+    host_ok = is_public_host(host) or is_private_ipv4(host) if parts.netloc == "vpn" else is_private_ipv4(host)
+    if not host_ok or not 1 <= port <= 65535 or not _HEX64.match(fp):
+        return None
+    vpn_host = q.get("vh", "") if parts.netloc == "enroll" else ""
+    if vpn_host and not is_public_host(vpn_host):
         return None
     if not (_TOKEN.match(rid) and _TOKEN.match(nonce) and _HEX32.match(mid) and _HOST.match(hostname) and _USER.match(user)):
         return None
@@ -173,6 +195,8 @@ def parse(raw: str) -> PamRequest | None:
     if parts.netloc == "enroll":
         tty, service, client = "", "", ""
     fields = {"h": host, "p": port, "fp": fp, "id": rid, "n": nonce, "m": mid, "hn": hostname, "u": user}
+    if vpn_host:
+        fields["vh"] = vpn_host
     if tty:
         fields["tty"] = tty
     if service:
@@ -180,7 +204,7 @@ def parse(raw: str) -> PamRequest | None:
     if client:
         fields["r"] = client
     rebuilt = f"thessleypam://{parts.netloc}?" + urlencode(fields)  # only validated fields travel on
-    return PamRequest(parts.netloc, rid, nonce, host, port, fp, mid, hostname, user, tty, service, client, rebuilt)
+    return PamRequest(parts.netloc, rid, nonce, host, port, fp, mid, hostname, user, tty, service, client, rebuilt, vpn_host=vpn_host)
 
 
 def canonical(type_: str, request_id: str, machine_id: str, username: str, nonce: str, timestamp: int, action: str) -> bytes:

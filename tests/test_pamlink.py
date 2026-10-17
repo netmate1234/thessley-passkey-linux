@@ -420,5 +420,107 @@ class CoreFlowTest(unittest.TestCase):
         self.assertEqual(self.vault.all()[0].kind, "site")
 
 
+class VpnTest(unittest.TestCase):
+    """A VPN approval comes from the internet. Its link may name a public host, but the app answers it only for the host it
+    recorded when it was enrolled for the VPN (on the local network, with the code check)."""
+
+    PUBLIC = "82.67.210.182"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.vault = vault.Vault(Path(self.tmp.name) / "devices.json")
+        self.svc = core.Service(self.vault)
+        self.computer = FakeComputer()
+        self._orig = core.PinnedClient
+        core.PinnedClient = self.computer
+        self.addCleanup(setattr, core, "PinnedClient", self._orig)
+
+    def vpn_link(self, **kw):
+        kw.setdefault("h", self.PUBLIC)
+        return mklink("vpn", tty="vpn", s="openvpn", r="203.0.113.7", **kw)
+
+    def enrol(self, vh=PUBLIC):
+        extra = {"vh": vh} if vh else {}
+        return self.svc.enroll(pamlink.parse(mklink("enroll", **extra)), "My PC", "pin", Pin("246810", "246810"))
+
+    def test_only_a_vpn_link_may_name_a_public_host(self):
+        for host in (self.PUBLIC, "vpn.example.org"):
+            r = pamlink.parse(self.vpn_link(h=host))
+            self.assertEqual((r.kind, r.heading, r.ip, r.host), ("vpn", "Approve VPN login", "203.0.113.7", host))
+            self.assertIsNone(pamlink.parse(mklink("sudo", h=host)), host)       # every other request: local network only
+            self.assertIsNone(pamlink.parse(mklink("login", h=host)), host)
+            self.assertIsNone(pamlink.parse(mklink("enroll", h=host)), host)     # and so is enrolling
+        for host in ("localhost", "vpn", "evil..com", "a b", "999.1.1.1", "[::1]", "http://x.org"):
+            self.assertIsNone(pamlink.parse(self.vpn_link(h=host)), host)
+
+    def test_an_enrolment_may_carry_the_public_host_but_only_a_valid_one(self):
+        self.assertEqual(pamlink.parse(mklink("enroll", vh=self.PUBLIC)).vpn_host, self.PUBLIC)
+        self.assertIn(f"vh={self.PUBLIC}", pamlink.parse(mklink("enroll", vh=self.PUBLIC)).raw)
+        self.assertEqual(pamlink.parse(mklink("enroll")).vpn_host, "")
+        for bad in ("192.168.1.5", "localhost", "a b", "x;y"):
+            self.assertIsNone(pamlink.parse(mklink("enroll", vh=bad)), bad)
+        self.assertEqual(pamlink.parse(mklink("sudo", vh=self.PUBLIC)).vpn_host, "")   # only an enrolment has it
+
+    def test_enrolling_records_the_host_with_the_computer(self):
+        d = self.enrol()
+        self.assertEqual(d.vpn_host, self.PUBLIC)
+        self.assertEqual(self.vault.all()[0].vpn_host, self.PUBLIC)
+        self.assertEqual(self.enrol(vh="").vpn_host, "")        # an ordinary enrolment records none
+
+    def test_a_vpn_approval_for_the_recorded_host_is_signed_as_vpn(self):
+        d = self.enrol()
+        self.computer.calls.clear()
+        req = pamlink.parse(self.vpn_link())
+        self.assertEqual([c.id for c in self.svc.candidates(req)], [d.id])
+        self.assertEqual(self.svc.respond(req, d, True, Pin("246810")), "approved")
+        path, body = self.computer.calls[-1]
+        self.assertEqual(path, "/thessley-pam/v1/vpn/RequestId12345678/respond")
+        msg = pamlink.canonical("vpn", "RequestId12345678", MID, "ubuntu", "NonceNonce12345678", body["timestamp"], "approve")
+        serialization.load_der_public_key(base64.b64decode(d.public_key)).verify(
+            base64.b64decode(body["signature"]), msg, ec.ECDSA(hashes.SHA256()))
+        # it cannot pass as another kind of approval
+        other = pamlink.canonical("sudo", "RequestId12345678", MID, "ubuntu", "NonceNonce12345678", body["timestamp"], "approve")
+        with self.assertRaises(Exception):
+            serialization.load_der_public_key(base64.b64decode(d.public_key)).verify(
+                base64.b64decode(body["signature"]), other, ec.ECDSA(hashes.SHA256()))
+
+    def test_another_host_is_never_contacted_and_an_unenrolled_app_cannot_answer(self):
+        d = self.enrol()
+        self.computer.calls.clear()
+        for host in ("203.0.113.9", "attacker.example.org"):
+            req = pamlink.parse(self.vpn_link(h=host))
+            self.assertEqual(self.svc.candidates(req), [], host)
+            for approve in (True, False):          # a refusal contacts the address too, so it is checked the same way
+                with self.assertRaises(core.UnknownSite):
+                    self.svc.respond(req, d, approve, Pin("246810"))
+        self.assertEqual(self.computer.calls, [])
+        plain = self.svc.enroll(pamlink.parse(mklink("enroll", u="ubuntu", m="ef" * 16)), "Other", "pin", Pin("246810", "246810"))
+        req = pamlink.parse(self.vpn_link(m="ef" * 16))
+        self.assertEqual(self.svc.candidates(req), [])            # enrolled for the computer, but not for its VPN
+        with self.assertRaises(core.UnknownSite):
+            self.svc.respond(req, plain, True, Pin("246810"))
+
+    def test_the_host_comparison_ignores_case_only(self):
+        d = self.enrol(vh="vpn.example.org")
+        self.assertEqual(len(self.svc.candidates(pamlink.parse(self.vpn_link(h="VPN.Example.ORG")))), 1)
+        self.assertEqual(self.svc.candidates(pamlink.parse(self.vpn_link(h="vpn.example.org.evil.com"))), [])
+
+    def test_the_screens_explain_and_the_result_text(self):
+        from thessley_passkey import uicommon
+        req = pamlink.parse(self.vpn_link())
+        self.assertIn("sudo thessley-pam vpn enroll", uicommon.not_enrolled_text(req))
+        self.assertNotIn("vpn enroll", uicommon.not_enrolled_text(pamlink.parse(mklink("sudo"))))
+        self.assertEqual(uicommon.result_text(req, "approved"), "Approved. The VPN connection to orangepi5 continues.")
+
+    def test_old_vault_files_without_the_field_still_load(self):
+        d = self.enrol(vh="")
+        raw = json.loads((Path(self.tmp.name) / "devices.json").read_text())
+        for item in raw["devices"]:
+            item.pop("vpn_host", None)
+        (Path(self.tmp.name) / "devices.json").write_text(json.dumps(raw))
+        self.assertEqual(self.vault.all()[0].vpn_host, "")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -93,6 +93,7 @@ class Device:
     kind: str = "site"                         # "site" (a Thessley website) or "computer" (a Linux computer with thessley-pam)
     machine_id: str = ""                       # computers only: the stable id the computer gave in its link
     hostname: str = ""                         # computers only: its name, for display
+    vpn_host: str = ""                         # computers only: the public host its VPN approvals come from (set at enrolment)
 
     @property
     def uses_pin(self) -> bool:

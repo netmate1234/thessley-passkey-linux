@@ -25,7 +25,7 @@ from .vault import Device, Locked  # noqa: E402
 
 APP_ID = "se.thessley.Passkey"
 from .uicommon import (  # noqa: E402
-    ENROLL_EXPLANATION, LOGO_PATH, LOGO_SIZE, NOT_ENROLLED, PROTECTION_LABELS, TYPE_TEXT, available_protections, result_text, device_details, device_summary, enrolled_text, explain,
+    ENROLL_EXPLANATION, LOGO_PATH, LOGO_SIZE, NOT_ENROLLED, not_enrolled_text, PROTECTION_LABELS, TYPE_TEXT, available_protections, result_text, device_details, device_summary, enrolled_text, explain,
 )
 
 
@@ -361,7 +361,7 @@ class Window(Adw.ApplicationWindow):
         col.append(group)
 
         if not devices:
-            col.append(_label(NOT_ENROLLED.format(origin=req.display), ["error"]))
+            col.append(_label(not_enrolled_text(req), ["error"]))
             close = Gtk.Button(label="Close")
             close.add_css_class("pill")
             close.connect("clicked", lambda *_: self.close())

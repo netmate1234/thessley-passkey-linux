@@ -67,12 +67,21 @@ class Service:
         """Devices enrolled for this request's site (or computer), narrowed to the named account if there is one."""
         devices = self.vault.for_origin(req.origin)
         if isinstance(req, PamRequest):  # a computer: the account named in the request, nobody else's
-            return [d for d in devices if d.kind == "computer" and d.username == req.username]
+            mine = [d for d in devices if d.kind == "computer" and d.username == req.username]
+            if req.type == "vpn":  # only the enrolment that recorded this very host (see _vpn_host_ok)
+                mine = [d for d in mine if self._vpn_host_ok(d, req)]
+            return mine
         if req.username:
             named = [d for d in devices if d.username and d.username.casefold() == req.username.casefold()]
             if named:
                 return named
         return devices
+
+    @staticmethod
+    def _vpn_host_ok(device: Device, req) -> bool:
+        """A VPN approval is reached at a public address, so the only protection is that this app, when it was enrolled for the
+        VPN (`thessley-pam vpn enroll`, on the local network, with the code check), recorded exactly that host."""
+        return bool(device.vpn_host) and device.vpn_host.casefold() == req.host.casefold()
 
     # ---- unlocking -----------------------------------------------------------------
 
@@ -282,6 +291,7 @@ class Service:
             username=clean_text(answer.get("username"), 100) or req.username, label=label, enrolled_at=int(time.time()),
             public_key=public_key, protection=protection, wrapped=wrapped, kdf=kdf, fido2=fido, tpm=tpm_blobs,
             kind="computer", machine_id=req.machine_id, hostname=clean_text(answer.get("hostname"), 64) or req.hostname,
+            vpn_host=req.vpn_host,
             attestation=str(answer.get("attestation") or ""),
         )
         if tpm_blobs and device.attestation != "tpm":
@@ -291,10 +301,14 @@ class Service:
 
     def respond_computer(self, req: PamRequest, device: Device, approve: bool, interaction: Interaction) -> str:
         """Approve or deny a sudo or login request from a Linux computer."""
-        if req.type not in ("sudo", "login"):
+        if req.type not in ("sudo", "login", "vpn"):
             raise ValueError("This is not a login or sudo request.")
         if device.kind != "computer" or device.machine_id != req.machine_id or device.username != req.username:
             raise UnknownSite(f"This app is not enrolled for {req.username} on {req.hostname}.")
+        if req.type == "vpn" and not self._vpn_host_ok(device, req):
+            # before any connection, a refusal included: an address that was not recorded at enrolment is never contacted
+            raise UnknownSite(f"This app was not enrolled for VPN approvals from {req.host}. On {req.hostname} run: "
+                              "sudo thessley-pam vpn enroll")
         if not approve:
             # No PIN, no key: a refusal grants nothing, so the request's own nonce (only whoever saw the link has it)
             # stands in for the signature. An older computer that insists on a signature, or one out of reach, does not

@@ -92,7 +92,7 @@ def describe(device, chip: dict | str | None = None) -> Sections:
         ("Added", when(device.enrolled_at)),
         ("Last used", when(device.last_used)),
         ("Device id", device.id),
-    ])]
+    ] + ([("Approves", f"VPN logins from {device.vpn_host} for this account")] if getattr(device, "vpn_host", "") else []))]
 
     protection = [("Protected by", PROTECTION_LABELS.get(device.protection, device.protection))]
     if device.uses_pin:

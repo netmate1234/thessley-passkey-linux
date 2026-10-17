@@ -513,6 +513,21 @@ class VpnTest(unittest.TestCase):
         self.assertNotIn("vpn enroll", uicommon.not_enrolled_text(pamlink.parse(mklink("sudo"))))
         self.assertEqual(uicommon.result_text(req, "approved"), "Approved. The VPN connection to orangepi5 continues.")
 
+    def test_the_home_window_lists_vpn_entries_apart_from_computers(self):
+        from thessley_passkey import details, uicommon
+        plain = self.enrol(vh="")
+        vpn = self.svc.enroll(pamlink.parse(mklink("enroll", vh=self.PUBLIC, m="ef" * 16)), "VPN PC", "pin", Pin("246810", "246810"))
+        sections = {title: items for title, items, _ in uicommon.home_sections(self.vault.all())}
+        self.assertEqual(list(sections), ["Enrolled sites", "Enrolled computers", "VPN"])
+        self.assertEqual([d.id for d in sections["Enrolled computers"]], [plain.id])
+        self.assertEqual([d.id for d in sections["VPN"]], [vpn.id])
+        self.assertIn(f"VPN host {self.PUBLIC}", uicommon.device_summary(vpn))
+        self.assertNotIn("VPN host", uicommon.device_summary(plain))
+        rows = dict(details.describe(vpn)[0][1])
+        self.assertIn(self.PUBLIC, rows["Approves"])
+        empty = {title: hint for title, items, hint in uicommon.home_sections([])}
+        self.assertIn("vpn enroll", empty["VPN"][1])
+
     def test_old_vault_files_without_the_field_still_load(self):
         d = self.enrol(vh="")
         raw = json.loads((Path(self.tmp.name) / "devices.json").read_text())

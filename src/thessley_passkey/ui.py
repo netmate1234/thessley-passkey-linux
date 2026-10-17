@@ -25,7 +25,7 @@ from .vault import Device, Locked  # noqa: E402
 
 APP_ID = "se.thessley.Passkey"
 from .uicommon import (  # noqa: E402
-    ENROLL_EXPLANATION, LOGO_PATH, LOGO_SIZE, NOT_ENROLLED, not_enrolled_text, PROTECTION_LABELS, TYPE_TEXT, available_protections, result_text, device_details, device_summary, enrolled_text, explain,
+    ENROLL_EXPLANATION, LOGO_PATH, LOGO_SIZE, NOT_ENROLLED, home_sections, not_enrolled_text, PROTECTION_LABELS, TYPE_TEXT, available_protections, result_text, device_details, device_summary, enrolled_text, explain,
 )
 
 
@@ -210,12 +210,7 @@ class Window(Adw.ApplicationWindow):
                 pass  # no logo is better than no window
         col.append(header)
         devices = vault.sort_devices(self.service.vault.all())
-        sites = [d for d in devices if d.kind != "computer"]
-        computers = [d for d in devices if d.kind == "computer"]
-        for title, items, empty in (
-            ("Enrolled sites", sites, ("Nothing enrolled yet", "On a site's profile page choose Add a device, then press “Open on this device”.")),
-            ("Enrolled computers", computers, ("No computers yet", "On a Linux computer with thessley-pam run “thessley-pam enroll --user NAME --link”.")),
-        ):
+        for title, items, empty in home_sections(devices):
             group = Adw.PreferencesGroup(title=title)
             if not items:
                 group.add(_plain_row(*empty))

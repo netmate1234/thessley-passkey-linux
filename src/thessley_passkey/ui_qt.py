@@ -17,7 +17,7 @@ from . import __version__, elevate, link, protectors, vault
 from .core import Service, default_label
 from .interaction import Cancelled, Interaction
 from .uicommon import (
-    ENROLL_EXPLANATION, LOGO_PATH, LOGO_SIZE, NOT_ENROLLED, not_enrolled_text, PROTECTION_LABELS, TYPE_TEXT, available_protections, result_text, device_details, device_summary, enrolled_text, explain,
+    ENROLL_EXPLANATION, LOGO_PATH, LOGO_SIZE, NOT_ENROLLED, home_sections, not_enrolled_text, PROTECTION_LABELS, TYPE_TEXT, available_protections, result_text, device_details, device_summary, enrolled_text, explain,
 )
 
 STYLE = """
@@ -344,13 +344,7 @@ class Window(QtWidgets.QMainWindow):
             if toast:
                 col.addWidget(_label(toast, "error"))
             devices = vault.sort_devices(self.service.vault.all())
-            sections = (
-                ("Enrolled sites", [d for d in devices if d.kind != "computer"],
-                 ("Nothing enrolled yet", "On a site's profile page choose Add a device, then press “Open on this device”.")),
-                ("Enrolled computers", [d for d in devices if d.kind == "computer"],
-                 ("No computers yet", "On a Linux computer with thessley-pam run “thessley-pam enroll --user NAME --link”.")),
-            )
-            for title, items, empty in sections:
+            for title, items, empty in home_sections(devices):
                 col.addWidget(_label(title, "notice"))
                 if not items:
                     col.addWidget(_rows([empty]))

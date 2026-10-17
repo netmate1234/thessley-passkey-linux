@@ -106,6 +106,19 @@ def enrolled_text(device, origin: str, protection: str, note: str) -> str:
     return text
 
 
+def home_sections(devices) -> list[tuple[str, list, tuple[str, str]]]:
+    """The lists of the home window: (title, devices, (empty title, empty hint)). VPN entries, the ones enrolled with
+    `thessley-pam vpn enroll` (they carry the public host their approvals come from), are a list of their own."""
+    sites = [d for d in devices if d.kind != "computer"]
+    computers = [d for d in devices if d.kind == "computer" and not getattr(d, "vpn_host", "")]
+    vpn = [d for d in devices if d.kind == "computer" and getattr(d, "vpn_host", "")]
+    return [
+        ("Enrolled sites", sites, ("Nothing enrolled yet", "On a site's profile page choose Add a device, then press “Open on this device”.")),
+        ("Enrolled computers", computers, ("No computers yet", "On a Linux computer with thessley-pam run “thessley-pam enroll --user NAME --link”.")),
+        ("VPN", vpn, ("No VPN yet", "On the VPN server run “sudo thessley-pam vpn enroll”, then scan or paste its link here.")),
+    ]
+
+
 def device_summary(device) -> str:
     if device.kind == "computer":  # a computer this app approves for: its own verdict on the TPM, not a site's
         proof = ""
@@ -113,7 +126,8 @@ def device_summary(device) -> str:
             proof = " · TPM verified by the computer"
         elif device.uses_tpm:
             proof = " · TPM not verified: " + (device.attestation_note or "the computer could not verify it")
-        return f"{device.username or 'account'} · {device.label} · {PROTECTION_LABELS.get(device.protection, device.protection)}{proof}"
+        vpn = f" · VPN host {device.vpn_host}" if getattr(device, "vpn_host", "") else ""
+        return f"{device.username or 'account'} · {device.label} · {PROTECTION_LABELS.get(device.protection, device.protection)}{proof}{vpn}"
     if device.attestation == "tpm":
         proof = " · verified by the site"
     elif device.uses_tpm:

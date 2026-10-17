@@ -38,6 +38,21 @@ def _sign(key: ec.EllipticCurvePrivateKey, message: bytes) -> str:
     return protocol.b64(key.sign(message, ec.ECDSA(hashes.SHA256())))  # DER (r, s), as the server expects
 
 
+class _ComputerTpmClient:
+    """What `_attest_tpm` needs from the other end, for a computer: its TPM challenge, over the pinned connection."""
+
+    def __init__(self, req: PamRequest):
+        self.req = req
+
+    def tpm_challenge(self, request_id: str, ek_certs: list[bytes], ak_public: bytes) -> dict:
+        status, data = PinnedClient(self.req).post(
+            f"/thessley-pam/v1/enroll/{request_id}/tpm-challenge",
+            {"ek_certs": [protocol.b64(c) for c in ek_certs], "ak_public": protocol.b64(ak_public)}, timeout=60)
+        if status != 200 or not data.get("credential_blob") or not data.get("secret"):
+            raise ServerError(str(data.get("message") or "This computer does not verify TPMs."), "", status)
+        return data
+
+
 class Service:
     def __init__(self, store: Vault | None = None, fido2=protectors, client_factory=protocol.Client, tpm=tpm_mod):
         self.last_note = ""
@@ -118,7 +133,7 @@ class Service:
                 "certify_signature": protocol.b64(parts["signature"]),
                 "key_public": protocol.b64(parts["key_public"]),
             }
-        except (tpm_mod.TpmError, ServerError, NetworkError, ValueError, OSError, KeyError) as exc:
+        except (tpm_mod.TpmError, ServerError, NetworkError, PamError, ValueError, OSError, KeyError) as exc:
             self.last_note = f"Enrolled without hardware proof: {protocol.friendly(exc) if isinstance(exc, ServerError) else exc}"
             return None
 
@@ -229,12 +244,15 @@ class Service:
 
         device_id = vault.new_device_id()
         self.last_note = ""
-        tpm_blobs, wrapped = {}, {}
+        tpm_blobs, wrapped, attestation = {}, {}, None
         if protection.startswith("tpm"):
             kek = vault.derive_kek(pin_part, fido_part)
             tpm_blobs = self.tpm.create_key(kek)
             public_key = protocol.b64(self.tpm.spki_from_public(base64.b64decode(tpm_blobs["public"])))
             sign_proof = lambda msg: protocol.b64(self.tpm.sign(tpm_blobs, kek, msg))
+            # The same TPM proof as for a site: the computer challenges the chip, the chip certifies the key. It never
+            # blocks the enrolment: without the proof the computer just records that none was given.
+            attestation = self._attest_tpm(_ComputerTpmClient(req), req, tpm_blobs, kek)
         else:
             key = ec.generate_private_key(ec.SECP256R1())
             der = key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
@@ -244,23 +262,30 @@ class Service:
             public_key = _public_key_b64(key)
             sign_proof = lambda msg: _sign(key, msg)
 
-        ts = protocol.now()
+        ts = protocol.now()  # after the (slow) TPM work: the computer only accepts a fresh timestamp
         proof = sign_proof(pamlink.canonical("enroll", req.request_id, req.machine_id, req.username, req.nonce, ts, "register"))
         interaction.notify(f"On {req.hostname}, check that it shows the code {pamlink.pairing_code(public_key)}, then type yes there.")
+        body = {"public_key": public_key, "proof_signature": proof, "timestamp": ts, "label": label, "attestation_chain": []}
+        if attestation:
+            body["tpm"] = attestation
         status, answer = PinnedClient(req).post(
-            f"/thessley-pam/v1/enroll/{req.request_id}/respond",
-            {"public_key": public_key, "proof_signature": proof, "timestamp": ts, "label": label, "attestation_chain": []},
+            f"/thessley-pam/v1/enroll/{req.request_id}/respond", body,
             timeout=140)  # the computer holds the request until its user types yes
         interaction.clear_notice()
         if status != 200 or answer.get("result") != "ok":
             raise PamError(str(answer.get("message") or "The computer did not add this app."))
+        if protection.startswith("tpm") and not answer.get("attestation") and not self.last_note:
+            self.last_note = "The computer accepted this app but could not verify the TPM."
 
         device = Device(
             id=device_id, origin=req.origin, credential_id=str(answer["credential_id"]),
             username=clean_text(answer.get("username"), 100) or req.username, label=label, enrolled_at=int(time.time()),
             public_key=public_key, protection=protection, wrapped=wrapped, kdf=kdf, fido2=fido, tpm=tpm_blobs,
             kind="computer", machine_id=req.machine_id, hostname=clean_text(answer.get("hostname"), 64) or req.hostname,
+            attestation=str(answer.get("attestation") or ""),
         )
+        if tpm_blobs and device.attestation != "tpm":
+            device.attestation_note = self.last_note.removeprefix("Enrolled without hardware proof: ")
         self.vault.add(device)
         return device
 

@@ -42,12 +42,15 @@ _CLIENT = re.compile(r"^[0-9A-Fa-f.:]{1,45}$")
 # The link says type "sudo" for every request that is not a screen login (ssh included), so what is really being
 # approved is told apart by the optional display-only fields: s (PAM service) and, for old computers, tty "ssh".
 HEADINGS = {"enroll": "Add this app as an approver", "sudo": "Approve sudo", "ssh": "Approve ssh login",
-            "screen": "Approve screen login", "device": "Approve adding a device"}
+            "screen": "Approve screen login", "device": "Approve adding a device",
+            "web": "Approve the admin page sign-in", "webchange": "Approve a change to your keys"}
 WHAT = {
     "sudo": "Allow a sudo command on that computer",
     "ssh": "Let someone log in to that computer over ssh",
     "screen": "Log in at that computer's login or lock screen",
     "device": "Let a new phone or app be added for this account on that computer",
+    "web": "Sign in to the Thessley admin page on that computer",
+    "webchange": "Make the change you just asked for on the Thessley admin page",
 }
 
 
@@ -73,7 +76,7 @@ class PamRequest:
     @property
     def ip(self) -> str:
         """"Requested from": the ssh client's address (nothing for sudo or the screen, which are at the computer)."""
-        return self.client if self.kind == "ssh" else ""
+        return self.client if self.kind in ("ssh", "web") else ""
 
     @property
     def kind(self) -> str:
@@ -83,6 +86,10 @@ class PamRequest:
             return "screen"
         if self.service == "thessley-enroll" or self.tty == "add-device":  # Linux names the service, Windows the terminal
             return "device"
+        if self.service == "thessley-web":
+            return "web"
+        if self.service == "thessley-web-change":
+            return "webchange"
         if self.service == "sshd" or (not self.service and self.tty == "ssh"):
             return "ssh"
         return "sudo"

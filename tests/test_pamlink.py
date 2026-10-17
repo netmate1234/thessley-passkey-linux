@@ -91,6 +91,15 @@ class KindTest(unittest.TestCase):
         self.assertEqual(result_text(site, "approved"), "Approved. You can go back to the browser.")  # sites keep it
         self.assertIn("Not approved", result_text(site, "denied"))
 
+    def test_the_admin_web_page(self):
+        r = pamlink.parse(mklink("sudo", tty="-", s="thessley-web", r="192.168.1.50"))
+        self.assertEqual((r.kind, r.heading, r.ip), ("web", "Approve the admin page sign-in", "192.168.1.50"))
+        c = pamlink.parse(mklink("sudo", tty="-", s="thessley-web-change"))
+        self.assertEqual((c.kind, c.heading), ("webchange", "Approve a change to your keys"))
+        from thessley_passkey.uicommon import result_text
+        self.assertIn("admin page", result_text(r, "approved"))
+        self.assertIn("change", result_text(c, "approved"))
+
     def test_adding_a_device(self):
         r = pamlink.parse(mklink("sudo", tty="-", s="thessley-enroll"))
         self.assertEqual((r.kind, r.heading, r.terminal), ("device", "Approve adding a device", ""))

@@ -31,6 +31,8 @@ def result_text(req, outcome: str) -> str:
         "sudo": f"Approved. The sudo command on {host} continues.",
         "screen": f"Approved. {host} lets the login through.",
         "device": f"Approved. The new phone or app can now be added on {host}.",
+        "web": f"Approved. The admin page on {host} opens.",
+        "webchange": f"Approved. The change on {host} goes through.",
     }.get(kind, "Approved.")
 
 

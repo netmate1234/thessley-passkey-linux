@@ -17,13 +17,12 @@ def is_admin() -> bool:
         return False
 
 
-def needed_for(protection: str, proof: bool = True) -> bool:
+def needed_for(protection: str) -> bool:
     """True when enrolling with this protection has to run as administrator, and this process is not.
 
-    `proof` is whether the enrolment includes the TPM proof for a website (TPM2_ActivateCredential, which Windows lets only
-    administrators run). Enrolling as an approver for a computer (thessley-pam) only makes a key in the TPM and signs with
-    it, which needs no administrator rights: pass proof=False there."""
-    return proof and os.name == "nt" and protection.startswith("tpm") and not is_admin()
+    A TPM enrolment includes the TPM proof (TPM2_ActivateCredential, which Windows lets only administrators run), for a
+    website and for a computer (thessley-pam) alike."""
+    return os.name == "nt" and protection.startswith("tpm") and not is_admin()
 
 
 def _command(link: str) -> tuple[str, str]:
@@ -35,10 +34,15 @@ def _command(link: str) -> tuple[str, str]:
     return sys.executable, f'-c "{code}" "{link}"'
 
 
+# The links an administrator copy may be opened on: a website enrolment or a computer enrolment (both rebuilt from validated
+# fields by link.parse / pamlink.parse, so nothing unchecked travels with them).
+ALLOWED_LINKS = ("thessleypasskey://auth?", "thessleypam://enroll?")
+
+
 def relaunch(link: str) -> bool:
     """Reopen the app as administrator on `link`. False if the user declined the prompt."""
     import ctypes
-    if '"' in link or any(c in link for c in "\r\n\0") or not link.startswith("thessleypasskey://auth?"):
+    if '"' in link or any(c in link for c in "\r\n\0") or not link.startswith(ALLOWED_LINKS):
         return False  # never hand anything but a rebuilt, validated link to an administrator process
     program, args = _command(link)
     # ShellExecuteW returns a value above 32 when the new process started.

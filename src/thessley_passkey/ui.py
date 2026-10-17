@@ -244,6 +244,8 @@ class Window(Adw.ApplicationWindow):
         self._page("home", col)
 
     def _open_pasted(self, entry) -> None:
+        if link.is_open_link(entry.get_text()):
+            return
         req = link.parse_any(entry.get_text())
         if req is None:
             self.toasts.add_toast(Adw.Toast(title="That is not a valid Thessley link."))
@@ -454,6 +456,8 @@ class Application(Adw.Application):
     def do_command_line(self, cmdline):
         args = cmdline.get_arguments()[1:]
         raw = next((a for a in args if a.startswith(("thessleypasskey:", "thessleypam:"))), None)
+        if raw and link.is_open_link(raw):
+            raw = None  # just bring the app up
         request = link.parse_any(raw) if raw else None
         if raw and request is None:
             window = Window(self, self.service, None, False)

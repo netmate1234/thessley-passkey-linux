@@ -91,6 +91,13 @@ class KindTest(unittest.TestCase):
         self.assertEqual(result_text(site, "approved"), "Approved. You can go back to the browser.")  # sites keep it
         self.assertIn("Not approved", result_text(site, "denied"))
 
+    def test_the_open_link_only_brings_the_app_up(self):
+        for raw in ("thessleypam://open", "thessleypam://open/", " THESSLEYPAM://Open ", "thessleypam://open "):
+            self.assertTrue(link.is_open_link(raw), raw)
+        for raw in ("thessleypam://sudo?h=1", "thessleypam://opened", "thessleypam://open?x=1", "https://open", "", None, 5):
+            self.assertFalse(link.is_open_link(raw), raw)
+        self.assertIsNone(link.parse_any("thessleypam://open"))    # it is never a request to answer
+
     def test_the_admin_web_page(self):
         r = pamlink.parse(mklink("sudo", tty="-", s="thessley-web", r="192.168.1.50"))
         self.assertEqual((r.kind, r.heading, r.ip), ("web", "Approve the admin page sign-in", "192.168.1.50"))

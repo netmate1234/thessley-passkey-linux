@@ -125,6 +125,11 @@ def parse(raw: str) -> AuthRequest | None:
     return AuthRequest(type=rtype, request_id=rid, nonce=nonce, origin=origin, ip=ip, country=country, username=username, raw=raw)
 
 
+def is_open_link(raw) -> bool:
+    """thessleypam://open: only "bring the app up" (the admin web page's button), no request to answer."""
+    return isinstance(raw, str) and raw.strip().lower().rstrip("/") == "thessleypam://open"
+
+
 def parse_any(raw: str):
     """A thessleypasskey:// link (a website) or a thessleypam:// link (a Linux computer); None for anything else."""
     from . import pamlink

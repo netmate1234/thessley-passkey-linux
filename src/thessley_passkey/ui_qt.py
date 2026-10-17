@@ -384,6 +384,8 @@ class Window(QtWidgets.QMainWindow):
         self._page("home", build)
 
     def _open_pasted(self, text: str) -> None:
+        if link.is_open_link(text):
+            return
         req = link.parse_any(text.strip())
         if req is None:
             self.show_home("That is not a valid Thessley Passkey link.")
@@ -575,8 +577,6 @@ class Window(QtWidgets.QMainWindow):
         if success:
             # Back to the main screen on its own, unless the person has moved on in the meantime (a new link opened).
             QtCore.QTimer.singleShot(3000, lambda: self.show_home() if self.page_name() == "result" else None)
-        if success and self.launched_with_link:
-            QtCore.QTimer.singleShot(3000, self.close)
 
 
 def run(service: Service | None = None, argv: list[str] | None = None) -> int:
@@ -585,6 +585,8 @@ def run(service: Service | None = None, argv: list[str] | None = None) -> int:
     app.setApplicationName("Thessley Passkey")
     apply_theme(app)
     raw = next((a for a in argv[1:] if a.startswith(("thessleypasskey:", "thessleypam:"))), None)
+    if raw and link.is_open_link(raw):
+        raw = None  # just bring the app up
     request = link.parse_any(raw) if raw else None
     toast = "That is not a valid Thessley link." if raw and request is None else ""
     window = Window(service or Service(), request, bool(raw), toast)

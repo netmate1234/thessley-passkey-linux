@@ -577,6 +577,8 @@ def run(service: Service | None = None, argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     app = QtWidgets.QApplication(argv)
     app.setApplicationName("Thessley Passkey")
+    if LOGO_PATH.is_file():
+        app.setWindowIcon(QtGui.QIcon(str(LOGO_PATH)))
     apply_theme(app)
     raw = next((a for a in argv[1:] if a.startswith(("thessleypasskey:", "thessleypam:"))), None)
     if raw and link.is_open_link(raw):

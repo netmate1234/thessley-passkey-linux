@@ -37,13 +37,24 @@ whether to open Thessley Passkey. To undo the link handler: `... -m thessley_pas
 
 ```powershell
 .\packaging\windows\build.ps1      # makes dist\ThessleyPasskey\ (ThessleyPasskey.exe + thessley-passkey-cli.exe)
-.\packaging\windows\install.ps1    # copies it to %LOCALAPPDATA%\Programs, adds a Start menu entry and the link handler
+.\packaging\windows\install.ps1    # copies it to %LOCALAPPDATA%\Programs, adds Start menu/Desktop entries and the link handler
 .\packaging\windows\uninstall.ps1  # removes it again (-Purge also deletes the enrolled keys)
 ```
 
 `ThessleyPasskey.exe` is the window; `thessley-passkey-cli.exe` prints to a console (`list`, `enroll`,
 `respond`, `--diagnose`). The programs are not code-signed, so SmartScreen may warn when you first run
 them from a downloaded zip; building them yourself avoids that.
+
+The installer is per Windows account: it creates that account's shortcuts and URI handler and does not need administrator rights. To run it remotely, copy and extract the project on Windows, then use an interactive SSH PowerShell session as the account being set up:
+
+```powershell
+ssh -t kalle@WINDOWS_HOST powershell.exe -NoProfile
+cd C:\path\to\thessley-passkey-linux
+.\packaging\windows\build.ps1
+.\packaging\windows\install.ps1
+```
+
+Repeat the install while signed in as each Windows account that needs Thessley Passkey. Each account has its own app settings, enrolled keys, shortcuts, and link handler. Installing this desktop app does not enable QR approval for that account's SSH logins; that is configured separately in the Windows SSH QR installer.
 
 ## 3. What the diagnostics tell us
 

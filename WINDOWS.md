@@ -12,7 +12,7 @@ Services**. Windows 11 requires a TPM 2.0, so the TPM option is normally availab
 
 ## 1. Try it from source (fastest)
 
-You need Python 3.10+ 64-bit (`winget install Python.Python.3.12`) and the project folder (download the
+You need Python 3.12+ 64-bit (`winget install Python.Python.3.12`) and the project folder (download the
 zip from GitLab, or `git clone`). In PowerShell, inside the folder:
 
 ```powershell

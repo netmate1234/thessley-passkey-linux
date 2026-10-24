@@ -17,7 +17,7 @@ sudo apt install python3-gi gir1.2-adw-1 python3-cryptography python3-requests p
 ./uninstall.sh        # removes it (add --purge to also delete enrolled keys)
 ```
 
-Needs Python 3.10+, GTK 4 and libadwaita 1.5+ (Ubuntu 24.04 or newer), and
+Needs Python 3.12+, GTK 4 and libadwaita 1.5+ (Ubuntu 24.04 or newer), and
 python-fido2 1.2+ for security keys (Ubuntu 26.04 ships 2.0; older: `pip install fido2`).
 
 

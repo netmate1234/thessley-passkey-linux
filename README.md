@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/license-GPL--2.0--or--later-7c6cf0?style=flat-square) ![Linux](https://img.shields.io/badge/Linux-GTK%204-333?style=flat-square) ![TPM](https://img.shields.io/badge/TPM-2.0-35d0c0?style=flat-square) ![Deck](https://img.shields.io/badge/deck-7c6cf0?style=flat-square)
 
-[](https://netmate1234.github.io/thessley-passkey-linux/)
+[![banner](docs/preview/hero.png)](https://netmate1234.github.io/thessley-passkey-linux/)
 
 The desktop approver: a GTK app that signs in to any Thessley site, with the key protected by a TPM, a FIDO2 key or a PIN.
 
@@ -20,6 +20,19 @@ module (WordPress plugin or the Drupal module), unchanged.
 Press **Open on this device** on a site's login or profile page and this app opens
 (`thessleypasskey://` link handler). It shows which site is asking and from where, you
 choose **Approve** or **Deny**, then unlock with your **PIN** and/or **FIDO2 security key**.
+
+## Quick install
+
+```sh
+sudo apt install python3-gi gir1.2-adw-1 python3-cryptography python3-requests python3-fido2 python3-asn1crypto
+git clone https://github.com/netmate1234/thessley-passkey-linux.git
+cd thessley-passkey-linux
+./install.sh
+```
+
+**Verify:** on a Thessley site, profile page → **Add a device** → **Open on this device** opens the app.
+
+Requirements: Ubuntu 24.04+ (GTK 4, libadwaita 1.5+), Python 3.10+.
 
 ## Install
 

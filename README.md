@@ -1,5 +1,16 @@
 # Thessley Passkey for Linux (and Windows 11)
 
+The desktop approver: a GTK app that signs in to any Thessley site, with the key protected by a TPM, a FIDO2 key or a PIN.
+
+**Presentation:** [slides on GitHub Pages](https://netmate1234.github.io/thessley-presentations/passkey-linux/)
+
+- “Open on this device” hands the `thessleypasskey://` link to the app, which shows the site and asks approve or deny.
+- Enrol from the site’s profile page; the site then lists the computer under Thessley Passkey devices.
+- The TPM option keeps the key inside the chip; otherwise a software key is encrypted with scrypt or a security key.
+- Works unchanged with the WordPress plugin and the Drupal module.
+
+![Desktop approver](docs/preview/slide-2.png)
+
 [![thessley-passkey-linux — deck](docs/preview/slide-1.png)](https://netmate1234.github.io/thessley-presentations/passkey-linux/)
 
 **Interactive deck:** [netmate1234.github.io/thessley-presentations/passkey-linux](https://netmate1234.github.io/thessley-presentations/passkey-linux/) — arrow keys or click the edges.

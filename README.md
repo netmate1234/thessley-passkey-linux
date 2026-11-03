@@ -11,14 +11,6 @@ The desktop approver: a GTK app that signs in to any Thessley site, with the key
 
 ![Desktop approver](docs/preview/slide-2.png)
 
-[![thessley-passkey-linux — deck](docs/preview/slide-1.png)](https://netmate1234.github.io/thessley-presentations/passkey-linux/)
-
-**Interactive deck:** [netmate1234.github.io/thessley-presentations/passkey-linux](https://netmate1234.github.io/thessley-presentations/passkey-linux/) — arrow keys or click the edges.
-
-| How it works | Trust model |
-|:---:|:---:|
-| [![How it works](docs/preview/slide-2.png)](https://netmate1234.github.io/thessley-presentations/passkey-linux/#2) | [![Next](docs/preview/slide-1.png)](https://netmate1234.github.io/thessley-presentations/passkey-linux/#1) |
-
 Approve **Thessley Passkey** logins from an Ubuntu (or other GTK) desktop, or from **Windows 11** (see [WINDOWS.md](WINDOWS.md)), the same
 protocol the Android app speaks. It works with any site running the Thessley Passkey
 module (WordPress plugin or the Drupal module), unchanged.

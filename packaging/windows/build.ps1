@@ -1,4 +1,4 @@
-# Builds dist\ThessleyPasskey\ on Windows. Needs Python 3.10+ (64-bit) from python.org or: winget install Python.Python.3.12
+# Builds dist\ThessleyPasskey\ on Windows. Needs Python 3.12+ (64-bit) from python.org or: winget install Python.Python.3.12
 $ErrorActionPreference = "Stop"
 Set-Location (Resolve-Path "$PSScriptRoot\..\..")
 if (-not (Test-Path .venv)) { py -3 -m venv .venv }

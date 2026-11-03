@@ -2,7 +2,7 @@
 name = "thessley-passkey-linux"
 version = "0.1.0"
 description = "Thessley Passkey for Linux desktops: approve Thessley Passkey logins with a PIN or FIDO2 security key"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = { text = "GPL-2.0-or-later" }
 dependencies = ["cryptography", "requests", "fido2>=1.2", "asn1crypto"]
 

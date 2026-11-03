@@ -1,19 +1,17 @@
 # Thessley Passkey for Linux (and Windows 11)
 
-![License](https://img.shields.io/badge/license-GPL--2.0--or--later-7c6cf0?style=flat-square) ![Linux](https://img.shields.io/badge/Linux-GTK%204-333?style=flat-square) ![TPM](https://img.shields.io/badge/TPM-2.0-35d0c0?style=flat-square) ![Deck](https://img.shields.io/badge/deck-slides-7c6cf0?style=flat-square)
+![License](https://img.shields.io/badge/license-GPL--2.0--or--later-7c6cf0?style=flat-square) ![Linux](https://img.shields.io/badge/Linux-GTK%204-333?style=flat-square) ![TPM](https://img.shields.io/badge/TPM-2.0-35d0c0?style=flat-square) ![Deck](https://img.shields.io/badge/deck-7c6cf0?style=flat-square)
 
-[![thessley-passkey-linux](docs/preview/slide-1.png)](https://netmate1234.github.io/thessley-passkey-linux/)
+[](https://netmate1234.github.io/thessley-passkey-linux/)
 
 The desktop approver: a GTK app that signs in to any Thessley site, with the key protected by a TPM, a FIDO2 key or a PIN.
 
-**Presentation:** [slides on GitHub Pages](https://netmate1234.github.io/thessley-passkey-linux/)
+**Presentation:** [interactive deck](https://netmate1234.github.io/thessley-passkey-linux/)
 
 - “Open on this device” hands the `thessleypasskey://` link to the app, which shows the site and asks approve or deny.
 - Enrol from the site’s profile page; the site then lists the computer under Thessley Passkey devices.
 - The TPM option keeps the key inside the chip; otherwise a software key is encrypted with scrypt or a security key.
 - Works unchanged with the WordPress plugin and the Drupal module.
-
-![Desktop approver](docs/preview/slide-2.png)
 
 Approve **Thessley Passkey** logins from an Ubuntu (or other GTK) desktop, or from **Windows 11** (see [WINDOWS.md](WINDOWS.md)), the same
 protocol the Android app speaks. It works with any site running the Thessley Passkey
@@ -34,7 +32,6 @@ sudo apt install python3-gi gir1.2-adw-1 python3-cryptography python3-requests p
 
 Needs Python 3.10+, GTK 4 and libadwaita 1.5+ (Ubuntu 24.04 or newer), and
 python-fido2 1.2+ for security keys (Ubuntu 26.04 ships 2.0; older: `pip install fido2`).
-
 
 ## Enrol this computer
 1. On the site, log in, open your profile page, press **Add a device**, then **Open on this device**.

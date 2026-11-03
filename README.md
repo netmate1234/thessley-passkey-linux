@@ -1,5 +1,9 @@
 # Thessley Passkey for Linux (and Windows 11)
 
+![License](https://img.shields.io/badge/license-GPL--2.0--or--later-7c6cf0?style=flat-square) ![Linux](https://img.shields.io/badge/Linux-GTK%204-333?style=flat-square) ![TPM](https://img.shields.io/badge/TPM-2.0-35d0c0?style=flat-square) ![Deck](https://img.shields.io/badge/deck-slides-7c6cf0?style=flat-square)
+
+[![thessley-passkey-linux](docs/preview/slide-1.png)](https://netmate1234.github.io/thessley-passkey-linux/)
+
 The desktop approver: a GTK app that signs in to any Thessley site, with the key protected by a TPM, a FIDO2 key or a PIN.
 
 **Presentation:** [slides on GitHub Pages](https://netmate1234.github.io/thessley-passkey-linux/)

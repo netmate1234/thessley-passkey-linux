@@ -2,7 +2,7 @@
 
 The desktop approver: a GTK app that signs in to any Thessley site, with the key protected by a TPM, a FIDO2 key or a PIN.
 
-**Presentation:** [slides on GitHub Pages](https://netmate1234.github.io/thessley-presentations/passkey-linux/)
+**Presentation:** [slides on GitHub Pages](https://netmate1234.github.io/thessley-passkey-linux/)
 
 - “Open on this device” hands the `thessleypasskey://` link to the app, which shows the site and asks approve or deny.
 - Enrol from the site’s profile page; the site then lists the computer under Thessley Passkey devices.

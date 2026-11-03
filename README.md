@@ -1,5 +1,8 @@
 # Thessley Passkey for Linux (and Windows 11)
 
+**Presentation:** [HTML slides](https://netmate1234.github.io/thessley-presentations/passkey-linux/) · source [`docs/index.html`](docs/index.html)
+
+
 Approve **Thessley Passkey** logins from an Ubuntu (or other GTK) desktop, or from **Windows 11** (see [WINDOWS.md](WINDOWS.md)), the same
 protocol the Android app speaks. It works with any site running the Thessley Passkey
 module (WordPress plugin or the Drupal module), unchanged.
